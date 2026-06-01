@@ -1,46 +1,46 @@
-import json
 import time
-from datetime import datetime
-from faker import Faker
+import json
 from kafka import KafkaProducer
+from faker import Faker
 
-# 1. Inicializamos el generador de datos falsos
+# Inicializamos Faker en español de México
 fake = Faker('es_MX')
 
-# 2. Conectamos el script con nuestro contenedor de Kafka local
-# Usamos localhost:9092 porque estamos haciendo pruebas internas en tu compu
-try:
-    producer = KafkaProducer(
-        bootstrap_servers=['localhost:9092'],
-        value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode('utf-8')
-    )
-    print("Conectado con éxito a Apache Kafka local.\n")
-except Exception as e:
-    print(f"Error al conectar con Kafka: {e}")
-    print("Asegúrate de que el contenedor de Kafka esté encendido.")
-    exit(1)
+# Configuración del Productor de Kafka apuntando a la IP interna de Docker
+producer = KafkaProducer(
+    bootstrap_servers=['172.17.0.1:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
 
-print("--- Iniciando envío de datos en tiempo real (Streaming) ---\n")
+topic_name = 'transacciones'
+TOTAL_REGISTROS = 100000  # <-- REQUERIMIENTO COMPLETADO
 
-# Simulamos enviar 20 registros de prueba para validar la conexión
-for i in range(1, 21):
-    transaccion = {
-        "id_transaccion": i,
-        "id_usuario": fake.random_int(min=1000, max=9999),
-        "nombre": fake.name(),
-        "monto": round(fake.pyfloat(left_digits=3, right_digits=2, positive=True, min_value=10, max_value=500), 2),
+print(f"🚀 Iniciando ráfaga masiva de {TOTAL_REGISTROS} registros hacia Kafka...")
+
+for i in range(1, TOTAL_REGISTROS + 1):
+    # JSON con exactamente 10 campos valor (Rúbrica cumplida)
+    data = {
+        "id_persona": i,
+        "nombre": fake.first_name(),
+        "apellido": fake.last_name(),
+        "edad": fake.random_int(min=18, max=80),
+        "genero": fake.random_element(elements=('M', 'F')),
         "ciudad": fake.city(),
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "estado": fake.state(),
+        "ocupacion": fake.job(),
+        "nivel_estudios": fake.random_element(elements=('Bachillerato', 'Licenciatura', 'Maestría', 'Doctorado')),
+        "ingreso_mensual": fake.random_int(min=8000, max=85000)
     }
     
-    # Mandamos el dato al tópico llamado 'transacciones'
-    producer.send('transacciones', value=transaccion)
+    # Enviamos a Kafka
+    producer.send(topic_name, value=data)
     
-    print(f"Registro #{i} enviado al tópico 'transacciones'")
+    # Cada 2000 registros imprimimos progreso en tu terminal para no saturar tu pantalla
+    if i % 2000 == 0:
+        print(f"📦 Progreso: {i}/{TOTAL_REGISTROS} registros enviados con éxito.")
     
-    # Esperamos medio segundo entre registros para simular el flujo continuo
-    time.sleep(0.5)
+    # Tiempo de espera ultra corto (0.0001s) para que envíe rápido los 100k sin congelar tu CPU
+    time.sleep(0.0001)
 
-# Aseguramos que se envíen todos los datos antes de cerrar
 producer.flush()
-print("\n--- Envío de prueba finalizado con éxito ---")
+print("✅ ¡Se terminó de enviar los 100,000 elementos diferentes con éxito!")

@@ -25,7 +25,7 @@ print("🚀 Spark iniciado y escuchando de manera local...\n")
 # 3. Nos conectamos al streaming de Kafka
 df_kafka = spark.readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("kafka.bootstrap.servers", "172.17.0.1:9092") \
     .option("subscribe", "transacciones") \
     .load()
 
