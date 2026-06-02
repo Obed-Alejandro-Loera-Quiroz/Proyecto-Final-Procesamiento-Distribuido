@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  kafka-nodo:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-cluster-nodo-${NODO_ID}
+    restart: unless-stopped
+    network_mode: "host" # Crucial: Usa la red física del módem, no la red interna de Docker
+    environment:
+      # Configuración del ID único del nodo usando el archivo .env
+      KAFKA_NODE_ID: ${NODO_ID}
+      
+      # Roles del nodo: actúan como controlador (KRaft) y broker (manejador de datos)
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      
+      # El mapa de los 3 votantes oficiales del clúster (las 3 IPs fijas de la red)
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@192.168.0.101:9093,2@192.168.0.102:9093,3@192.168.0.103:9093'
+      
+      # Protocolos de conexión en la red
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      
+      # Cómo se van a anunciar los nodos entre sí a través del módem TP-Link
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://${LAPTOP_IP}:9092'
+      
+      # Configuración interna para los listeners
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+      
+      # Un ID único para que los 3 nodos sepan que pertenecen al mismo clúster de la materia
+      KAFKA_CLUSTER_ID: '4L62YDgNTki3A6wV3lExlw=='
+      
+      # Políticas de replicación para soportar caídas de nodos (tolerancia a fallos)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_CONTROLLER_SNAPSHOT_CHUNKS_BYTES: 268435456
+      
+      # Configuración de logs en consola
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.server=INFO,org.apache.kafka=WARN"
+    volumes:
+      # Guarda los datos en tu disco para que no se borren si apagas la máquina
+      - kafka-data:/var/lib/kafka/data
+
+volumes:
+  kafka-data:
