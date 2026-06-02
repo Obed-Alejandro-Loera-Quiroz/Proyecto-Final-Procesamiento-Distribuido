@@ -53,3 +53,7 @@ pip-delete-this-directory.txt
 # Archivos ocultos del sistema operativo
 .DS_Store
 Thumbs.db
+
+# Ignorar archivos de configuración local
+.env
+kafka-infra/.env
