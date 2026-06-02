@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   kafka-nodo:
     image: confluentinc/cp-kafka:7.5.0
@@ -28,7 +26,8 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
       
-      # Un ID único para que los 3 nodos sepan que pertenecen al mismo clúster de la materia
+      # Las dos variables que exige Confluent para KRaft puestas de forma directa
+      CLUSTER_ID: '4L62YDgNTki3A6wV3lExlw=='
       KAFKA_CLUSTER_ID: '4L62YDgNTki3A6wV3lExlw=='
       
       # Políticas de replicación para soportar caídas de nodos (tolerancia a fallos)
