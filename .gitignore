@@ -1,0 +1,55 @@
+# ==========================================
+# Datos del Proyecto (Big Data / Archivos pesados)
+# ==========================================
+# Ignora el dataset generado para evitar saturar el repositorio de Git
+shared-data/
+
+# Ignora cualquier otro archivo de datos masivos que puedan generar sin querer
+*.json
+*.csv
+*.sql
+
+# ==========================================
+# Infraestructura y Contenedores (Docker)
+# ==========================================
+# Ignora las carpetas físicas donde Docker guardará los datos persistentes de Kafka y Spark
+# (si es que deciden mapear volúmenes locales en sus docker-compose)
+.docker-data/
+**/data/kafka/
+**/data/spark/
+
+# Archivos de logs internos de los servidores
+*.log
+logs/
+*.out
+
+# ==========================================
+# Entorno de Desarrollo (Python)
+# ==========================================
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ==========================================
+# Configuraciones del Sistema Operativo o IDEs
+# ==========================================
+# Archivos de configuración de editores de código
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Archivos ocultos del sistema operativo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,2 @@
+# Solo librerías estándar de Python
+faker==33.3.1
