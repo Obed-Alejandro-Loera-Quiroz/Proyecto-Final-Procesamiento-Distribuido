@@ -5,12 +5,14 @@ services:
     environment:
       - SPARK_MODE=master
     ports:
-      - "7077:7077"   # Puerto interno de comunicación
-      - "8080:8080"   # Interfaz Web para el Dr. Galván
+      - "7077:7077"
+      - "8080:8080"
     volumes:
       - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
+    # AQUÍ ESTÁ LA CORRECCIÓN: Le decimos a Apache Spark que arranque como master
+    command: /opt/spark/sbin/start-master.sh
 
 networks:
   spark-net:

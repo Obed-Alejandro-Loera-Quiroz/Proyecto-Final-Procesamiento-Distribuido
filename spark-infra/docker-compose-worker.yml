@@ -4,11 +4,14 @@ services:
     container_name: spark-worker-nodo
     environment:
       - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://192.168.0.103:7077
+    ports:
+      - "8081:8081" # Interfaz del worker para revisar su estado individual
     volumes:
       - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
+    # AQUÍ ESTÁ LA CORRECCIÓN: Le decimos que arranque como worker apuntando a tu Master
+    command: /opt/spark/sbin/start-worker.sh spark://192.168.0.103:7077
 
 networks:
   spark-net:
