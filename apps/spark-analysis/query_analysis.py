@@ -12,7 +12,7 @@ def iniciar_analisis_spark():
     # En tu casa corre en modo 'local', pero en la Uni apuntará al "Master" de la red
     spark = SparkSession.builder \
         .appName("AnaliticaPoblacionUAA") \
-        .master("local[*]") \
+        .master("spark://192.168.0.103:7077") \
         .getOrCreate()
 
     # Reducimos el ruido de logs en la consola para ver solo los resultados
