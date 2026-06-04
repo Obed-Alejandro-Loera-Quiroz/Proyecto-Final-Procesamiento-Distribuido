@@ -5,12 +5,14 @@ services:
     environment:
       - SPARK_MODE=worker
     ports:
-      - "8081:8081" # Interfaz del worker para revisar su estado individual
+      - "8081:8081"
     volumes:
       - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
-    # AQUÍ ESTÁ LA CORRECCIÓN: Le decimos que arranque como worker apuntando a tu Master
+    # TRUCO REY: Lo mismo para que la laptop de Osvaldo y Pamela no lo tumben
+    tty: true
+    stdin_open: true
     command: /opt/spark/sbin/start-worker.sh spark://192.168.0.103:7077
 
 networks:

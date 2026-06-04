@@ -11,7 +11,9 @@ services:
       - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
-    # AQUÍ ESTÁ LA CORRECCIÓN: Le decimos a Apache Spark que arranque como master
+    # TRUCO REY: Forzamos a que mantenga una consola abierta para que no se apague solo
+    tty: true
+    stdin_open: true
     command: /opt/spark/sbin/start-master.sh
 
 networks:
