@@ -2,6 +2,7 @@ services:
   spark-worker:
     image: apache/spark:3.5.1
     container_name: spark-worker-nodo
+    user: root  # Evita bloqueos de permisos en sus laptops
     environment:
       - SPARK_MODE=worker
     ports:
@@ -10,10 +11,8 @@ services:
       - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
-    # TRUCO REY: Lo mismo para que la laptop de Osvaldo y Pamela no lo tumben
-    tty: true
-    stdin_open: true
-    command: /opt/spark/sbin/start-worker.sh spark://192.168.0.103:7077
+    # CONEXIÓN DIRECTA EN TIEMPO REAL:
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://192.168.0.103:7077
 
 networks:
   spark-net:

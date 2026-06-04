@@ -2,6 +2,7 @@ services:
   spark-master:
     image: apache/spark:3.5.1
     container_name: spark-master-nodo-3
+    user: root  # Forzamos permisos de superusuario dentro de Docker
     environment:
       - SPARK_MODE=master
     ports:
@@ -11,10 +12,8 @@ services:
       - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
-    # TRUCO REY: Forzamos a que mantenga una consola abierta para que no se apague solo
-    tty: true
-    stdin_open: true
-    command: /opt/spark/sbin/start-master.sh
+    # COMANDO DIRECTO DIRECTO SIN SCRIPTS SECUNDARIOS:
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
 
 networks:
   spark-net:
