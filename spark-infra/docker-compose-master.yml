@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   spark-master:
-    image: bitnami/spark:3.5.1
+    image: bitnami/spark:3.5
     container_name: spark-master-nodo-3
     environment:
       - SPARK_MODE=master
