@@ -1,18 +1,12 @@
-version: '3.8'
-
 services:
   spark-worker:
-    image: bitnami/spark:3.5.1
-    # Cada uno le puede cambiar el nombre a container_name si quieren (ej. spark-worker-osvaldo)
+    image: apache/spark:3.5.1
     container_name: spark-worker-nodo
     environment:
       - SPARK_MODE=worker
-      # AQUÍ ESTÁ EL TRUCO: Le indicamos la IP fija de TU laptop en el módem de la Uni
       - SPARK_MASTER_URL=spark://192.168.0.103:7077
-      - SPARK_WORKER_CORES=2
-      - SPARK_WORKER_MEMORY=2g
     volumes:
-      - ../shared-data:/opt/bitnami/spark/shared-data
+      - ../shared-data:/opt/spark/shared-data
     networks:
       - spark-net
 
