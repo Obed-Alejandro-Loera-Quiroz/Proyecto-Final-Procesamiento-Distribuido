@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   spark-worker:
-    image: bitnami/spark:3.5
+    image: bitnami/spark:3.5.1
     # Cada uno le puede cambiar el nombre a container_name si quieren (ej. spark-worker-osvaldo)
     container_name: spark-worker-nodo
     environment:
