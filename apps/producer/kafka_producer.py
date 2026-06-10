@@ -4,12 +4,11 @@ import os
 from kafka import KafkaProducer
 
 # Variable global para monitorear dinámicamente los metadatos del clúster
-ultimo_meta = {"topic": "", "partition": -1, "node_id": "Calculando..."}
+ultimo_meta = {"topic": "", "partition": 0, "node_id": "Calculando..."}
 
 def al_recibir_meta(metadata):
     """ Función que captura los metadatos directamente devueltos por el módem """
     global ultimo_meta
-    # Extraemos el ID del broker/nodo que aceptó el mensaje físicamente en su disco duro
     node_id = getattr(metadata, 'node_id', 'Principal')
     ultimo_meta = {
         "topic": metadata.topic,
@@ -30,13 +29,12 @@ def iniciar_productor():
     ]
 
     try:
-        # Inicializamos el productor conectado a las 3 laptops
         producer = KafkaProducer(
             bootstrap_servers=BROKERS_CLUSTER,
             value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode('utf-8'),
             acks='all',  # Garantiza réplicas en las 3 laps para tolerancia a fallos
             retries=5,
-            max_block_ms=5000  # Evita que se congele eternamente si la red falla
+            max_block_ms=5000  
         )
         print("¡Conexión exitosa con el clúster de Kafka!")
     except Exception as e:
@@ -61,13 +59,10 @@ def iniciar_productor():
                 
             registro = json.loads(linea.strip())
             
-            # -----------------------------------------------------------------
-            # CLASIFICACIÓN Y MONITOREO EN TIEMPO REAL
-            # -----------------------------------------------------------------
-            
-            # Al agregar .add_callback(al_recibir_meta), interceptamos a qué nodo viaja el dato
+            # Enviamos el registro base al tópico principal y escuchamos el callback
             producer.send('personas-registro', value=registro).add_callback(al_recibir_meta)
             
+            # Clasificación analítica en paralelo
             if registro.get("activo") == True:
                 producer.send('personas-activas', value=registro)
                 
@@ -83,16 +78,17 @@ def iniciar_productor():
             conteo += 1
             # Cada 10,000 registros mostramos el estado de la red del clúster
             if conteo % 10000 == 0:
-                print(f"-> {conteo} registros enviados. [Último lote -> Partición: {ultimo_meta['partition']} | Enrutado al Broker ID: {ultimo_meta['node_id']}]")
+                # Un pequeño sleep síncrono muy corto para dar tiempo a que los callbacks se procesen
+                time.sleep(0.01) 
+                print(f"-> {conteo} registros leídos del JSON. [Último lote -> Partición: {ultimo_meta['partition']} | Enrutado al Broker ID: {ultimo_meta['node_id']}]")
 
-    # Forzamos la salida de datos de la RAM hacia la red
     print("\nVaciando buffers de red (Flush)...")
     producer.flush()
     producer.close()
 
     tiempo_total = time.time() - tiempo_inicio
     print("=========================================================")
-    print(f"¡Éxito total! Se transmitieron los 100,000 registros.")
+    print(f"¡Éxito total! Se procesaron los 100,000 registros base.")
     print(f"Tiempo de transmisión distribuida: {round(tiempo_total, 2)} segundos.")
     print("=========================================================")
 
