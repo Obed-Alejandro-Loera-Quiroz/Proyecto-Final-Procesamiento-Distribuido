@@ -1,79 +1,78 @@
 import json
+import os
 from kafka import KafkaConsumer
 
 def iniciar_consumidor():
     print("=========================================================")
-    print("Iniciando Consumidor Analítico de Kafka (Escucha Activa)...")
+    print("Iniciando Consumidor: CAPTURA MULTI-FORMATO DESDE 5 TOPICS")
     print("=========================================================")
 
-    # Mismo mapa de IPs distribuidas para conectarse mañana en la escuela
     BROKERS_CLUSTER = [
         '192.168.0.101:9092',
         '192.168.0.102:9092',
         '192.168.0.103:9092'
     ]
 
+    ruta_base = "/opt/spark/shared-data/"
+    if not os.path.exists(ruta_base):
+        ruta_base = ""
+
+    ruta_json = os.path.join(ruta_base, "dataset.json")
+    ruta_csv = os.path.join(ruta_base, "dataset_respaldo.csv")
+
     try:
-        # El consumidor se suscribe a las 5 categorías al mismo tiempo
+        # Suscripción explícita a los 5 tópicos creados en bash
         consumer = KafkaConsumer(
-            'personas-registro',
-            'personas-activas',
-            'personas-ingresos',
-            'personas-geografia',
-            'personas-metricas',
+            'personas-bloque-A',
+            'personas-bloque-B',
+            'personas-bloque-C',
+            'personas-bloque-D',
+            'personas-bloque-E',
             bootstrap_servers=BROKERS_CLUSTER,
-            auto_offset_reset='earliest',  # Lee desde el inicio del stream
-            enable_auto_commit=True,       # Confirma lecturas automáticamente
-            group_id='grupo-analitica-uaa', # ID del grupo de consumidores
+            auto_offset_reset='earliest',
+            enable_auto_commit=True,
+            group_id='grupo-final-uaa',
             value_deserializer=lambda x: json.loads(x.decode('utf-8'))
         )
-        print("¡Conexión Exitosa! Escuchando los datos del módem en tiempo real...")
+        print("¡Conexión Exitosa! Escuchando los 5 topics en paralelo...")
+        print(f"-> Formato JSON en: {ruta_json}")
+        print(f"-> Formato CSV (10 columnas) en: {ruta_csv}\n")
     except Exception as e:
-        print(f"Error al conectar el consumidor: {e}")
+        print(f"❌ Error al conectar el consumidor: {e}")
         return
 
-    # Variables de control para las métricas analíticas
-    totales = 0
-    activos = 0
-    ingresos_altos = 0
-    en_aguascalientes = 0
-    profesiones_clave = 0
+    total_recibidos = 0
 
-    try:
-        # Este ciclo se queda eternamente despierto atrapando lo que caiga en la red
-        for mensaje in consumer:
-            topico_origen = mensaje.topic
-            
-            # Sumamos al contador del tópico correspondiente
-            if topico_origen == 'personas-registro':
-                totales += 1
-            elif topico_origen == 'personas-activas':
-                activos += 1
-            elif topico_origen == 'personas-ingresos':
-                ingresos_altos += 1
-            elif topico_origen == 'personas-geografia':
-                en_aguascalientes += 1
-            elif topico_origen == 'personas-metricas':
-                profesiones_clave += 1
+    with open(ruta_json, 'w', encoding='utf-8') as f_json, open(ruta_csv, 'w', encoding='utf-8') as f_csv:
+        f_csv.write("id_persona,nombre,apellido,edad,genero,ciudad,estado,ocupacion,nivel_estudios,ingreso_mensual,antiguedad_anos,activo\n")
+        
+        try:
+            for mensaje in consumer:
+                registro = mensaje.value
+                
+                # 1. Formato JSON
+                f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                
+                # 2. Formato CSV
+                ciudad_limpia = registro['ciudad'].replace(",", "")
+                linea_csv = f"{registro['id_persona']},{registro['nombre']},{registro['apellido']},{registro['edad']},{registro['genero']},{ciudad_limpia},{registro['estado']},{registro['ocupacion']},{registro['nivel_estudios']},{registro['ingreso_mensual']},{registro['antiguedad_anos']},{registro['activo']}\n"
+                f_csv.write(linea_csv)
+                
+                total_recibidos += 1
+                
+                if total_recibidos % 10000 == 0:
+                    print(f"📥 [Clúster] {total_recibidos} registros Faker atrapados y respaldados en JSON y CSV.")
+                    
+                if total_recibidos >= 100000:
+                    print("\n=========================================================")
+                    print("🎯 ¡META COMPLETADA! 100,000 registros guardados desde los 5 topics.")
+                    print("=========================================================")
+                    break
 
-            # Cada 5,000 eventos procesados en total, arroja el reporte en la consola
-            total_procesados = totales + activos + ingresos_altos + en_aguascalientes + profesiones_clave
-            if total_procesados % 5000 == 0:
-                print("\n=========================================================")
-                print("         MÉTRICAS DEL CLÚSTER EN TIEMPO REAL             ")
-                print("=========================================================")
-                print(f" -> [Tópico Registro] Total de Población: {totales}")
-                print(f" -> [Tópico Activos] Usuarios Disponibles: {activos}")
-                print(f" -> [Tópico Finanzas] Ingresos Mayores a $25K: {ingresos_altos}")
-                print(f" -> [Tópico Geografía] Ubicados en Aguascalientes: {en_aguascalientes}")
-                print(f" -> [Tópico Métricas] Profesiones Estratégicas: {profesiones_clave}")
-                print(f" Total de mensajes procesados en el bus de red: {total_procesados}")
-                print("=========================================================\n")
-
-    except KeyboardInterrupt:
-        print("\nConsumidor apagado manualmente por el usuario.")
-    finally:
-        consumer.close()
+        except KeyboardInterrupt:
+            print("\nConsumidor detenido manualmente.")
+        finally:
+            consumer.close()
 
 if __name__ == "__main__":
     iniciar_consumidor()

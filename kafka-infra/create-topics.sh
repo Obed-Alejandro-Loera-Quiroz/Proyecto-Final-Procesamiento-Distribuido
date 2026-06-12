@@ -20,15 +20,15 @@ crear_topico() {
         --replication-factor 3
 }
 
-# --- LOS 5 TÓPICOS SOLICITADOS ---
-crear_topico "personas-registro"
-crear_topico "personas-activas"
-crear_topico "personas-ingresos"
-crear_topico "personas-geografia"
-crear_topico "personas-metricas"
+# --- LOS 5 TÓPICOS REQUERIDOS ALINEADOS A LA GENERACIÓN FAKER ---
+crear_topico "personas-bloque-A"
+crear_topico "personas-bloque-B"
+crear_topico "personas-bloque-C"
+crear_topico "personas-bloque-D"
+crear_topico "personas-bloque-E"
 
 echo "========================================================="
-echo "¡Estructura de tópicos inicializada localmente!"
+echo "¡Estructura de 5 tópicos inicializada con éxito!"
 echo "========================================================="
 
 echo "Tópicos activos en tu clúster actual:"
