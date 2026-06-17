@@ -10,7 +10,7 @@ def iniciar_consumidor():
     # CLÚSTER REMOTO: IPs de Tailscale actualizadas
     BROKERS_CLUSTER = [
         '100.115.62.37:9092',  # Osvaldo (Nodo 1)
-        '100.65.178.22:9092',  # Brayan (Nodo 2 - Temporal)
+        '100.123.126.75:9092',  # Brayan (Nodo 2 - Temporal)
         '100.72.209.77:9092'   # Obed (Nodo 3)
     ]
 
