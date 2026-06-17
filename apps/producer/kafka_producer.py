@@ -6,9 +6,7 @@ from faker import Faker
 
 
 BROKERS_CLUSTER = [
-    "100.115.62.37:9094",   # Osvaldo - Nodo 1
-    "100.123.126.75:9094",  # Pamila - Nodo 2
-    "100.72.209.77:9094"    # Obed - Nodo 3
+    "100.72.209.77:9092"    # Obed - Nodo 3
 ]
 
 TOPICOS = [
@@ -17,12 +15,21 @@ TOPICOS = [
     "datos-usuarios-zona3"
 ]
 
+# Particiones cuyo líder es Obed según el describe:
+# zona1 particion 2 -> Leader 3
+# zona2 particion 1 -> Leader 3
+# zona3 particion 2 -> Leader 3
+PARTICIONES_FIJAS = {
+    "datos-usuarios-zona1": 2,
+    "datos-usuarios-zona2": 1,
+    "datos-usuarios-zona3": 2
+}
+
+errores_envio = 0
 ultimo_meta = {
     "topic": "",
     "partition": -1
 }
-
-errores_envio = 0
 
 
 def al_recibir_meta(metadata):
@@ -91,6 +98,15 @@ def crear_registro(fake, id_persona):
     }
 
 
+def obtener_topico(conteo):
+    if conteo % 3 == 0:
+        return "datos-usuarios-zona1"
+    elif conteo % 3 == 1:
+        return "datos-usuarios-zona2"
+    else:
+        return "datos-usuarios-zona3"
+
+
 def iniciar_productor():
     global errores_envio
 
@@ -101,22 +117,26 @@ def iniciar_productor():
     fake = Faker("es_MX")
 
     try:
-        print("Conectando con el cluster de Kafka por Tailscale...")
+        print("Conectando con el cluster de Kafka por Tailscale en puerto 9092...")
 
         producer = KafkaProducer(
             bootstrap_servers=BROKERS_CLUSTER,
+            security_protocol="PLAINTEXT",
+            api_version=(3, 5, 0),
+
             value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
 
-            # Para pruebas estables por Tailscale.
-            # acks=1 confirma que el lider del topico recibio el mensaje.
             acks=1,
-
-            retries=5,
+            retries=3,
             retry_backoff_ms=1000,
-            max_block_ms=60000,
+
             request_timeout_ms=60000,
-            batch_size=32768,
-            linger_ms=20
+            delivery_timeout_ms=90000,
+            max_block_ms=60000,
+
+            batch_size=8192,
+            linger_ms=5,
+            max_in_flight_requests_per_connection=1
         )
 
         print("Conexion exitosa con el cluster de Kafka.")
@@ -135,36 +155,35 @@ def iniciar_productor():
             id_persona = conteo + 1
             registro = crear_registro(fake, id_persona)
 
-            if conteo % 3 == 0:
-                topic = "datos-usuarios-zona1"
-            elif conteo % 3 == 1:
-                topic = "datos-usuarios-zona2"
-            else:
-                topic = "datos-usuarios-zona3"
+            topic = obtener_topico(conteo)
+            partition = PARTICIONES_FIJAS[topic]
 
-            future = producer.send(topic, value=registro)
+            future = producer.send(
+                topic,
+                value=registro,
+                partition=partition
+            )
+
             future.add_callback(al_recibir_meta)
             future.add_errback(al_error_envio)
 
-            if id_persona % 10000 == 0:
-                try:
-                    producer.flush(timeout=60)
-                    print(
-                        f"-> {id_persona} registros confirmados en Kafka. "
-                        f"Ultimo topico: {ultimo_meta['topic']} | "
-                        f"Particion: {ultimo_meta['partition']}"
-                    )
-                except Exception as e:
-                    print(f"\nError durante flush parcial en registro {id_persona}: {e}")
-                    break
+            # Imprime más seguido para saber que sí está avanzando.
+            if id_persona % 1000 == 0:
+                producer.flush(timeout=60)
+                print(
+                    f"-> {id_persona} registros enviados. "
+                    f"Ultimo topico: {ultimo_meta['topic']} | "
+                    f"Particion: {ultimo_meta['partition']}"
+                )
+
+            # Pequeña pausa para no saturar Tailscale.
+            if id_persona % 5000 == 0:
+                time.sleep(0.2)
 
         print("\nLiberando flujo final de red...")
 
-        try:
-            producer.flush(timeout=120)
-            print("Flush final completado correctamente.")
-        except Exception as e:
-            print(f"Error durante el flush final: {e}")
+        producer.flush(timeout=120)
+        print("Flush final completado correctamente.")
 
     except KeyboardInterrupt:
         print("\nProductor detenido manualmente.")

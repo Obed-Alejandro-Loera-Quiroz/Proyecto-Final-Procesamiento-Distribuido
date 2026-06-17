@@ -2,13 +2,14 @@ import csv
 import json
 import os
 import sys
-from kafka import KafkaConsumer
+import time
+from kafka import KafkaConsumer, TopicPartition
 
 
+# Usamos Obed como broker inicial.
+# Kafka obtiene la metadata de los demas nodos automaticamente.
 BROKERS_CLUSTER = [
-    "100.115.62.37:9094",   # Osvaldo - Nodo 1
-    "100.123.126.75:9094",  # Pamila - Nodo 2
-    "100.72.209.77:9094"    # Obed - Nodo 3
+    "100.72.209.77:9092"    # Obed - Nodo 3
 ]
 
 TOPICOS = [
@@ -28,15 +29,67 @@ def obtener_rutas_archivos():
 
     os.makedirs(ruta_base, exist_ok=True)
 
-    ruta_json = os.path.join(ruta_base, "dataset.json")
-    ruta_csv = os.path.join(ruta_base, "dataset_respaldo.csv")
-    ruta_sql = os.path.join(ruta_base, "dataset_inserts.sql")
-
-    return ruta_json, ruta_csv, ruta_sql
+    return (
+        os.path.join(ruta_base, "dataset.json"),
+        os.path.join(ruta_base, "dataset_respaldo.csv"),
+        os.path.join(ruta_base, "dataset_inserts.sql")
+    )
 
 
 def limpiar_sql(valor):
     return str(valor).replace("'", "''")
+
+
+def crear_consumer():
+    return KafkaConsumer(
+        bootstrap_servers=BROKERS_CLUSTER,
+        security_protocol="PLAINTEXT",
+        api_version=(3, 5, 0),
+
+        value_deserializer=lambda x: json.loads(x.decode("utf-8")),
+
+        # No usamos group_id para evitar problemas con offsets viejos.
+        group_id=None,
+        enable_auto_commit=False,
+        auto_offset_reset="earliest",
+
+        request_timeout_ms=120000,
+        max_poll_records=2000,
+        consumer_timeout_ms=10000
+    )
+
+
+def asignar_particiones(consumer):
+    particiones_asignadas = []
+
+    print("Buscando particiones de los topics...")
+
+    for topico in TOPICOS:
+        particiones = None
+
+        for intento in range(10):
+            particiones = consumer.partitions_for_topic(topico)
+
+            if particiones:
+                break
+
+            print(f"Esperando metadata del topic {topico}... intento {intento + 1}/10")
+            time.sleep(2)
+
+        if not particiones:
+            raise Exception(f"No se pudieron obtener particiones del topic: {topico}")
+
+        for particion in particiones:
+            particiones_asignadas.append(TopicPartition(topico, particion))
+
+    consumer.assign(particiones_asignadas)
+    consumer.seek_to_beginning(*particiones_asignadas)
+
+    print("\nParticiones asignadas manualmente:")
+    for tp in particiones_asignadas:
+        print(f"-> {tp.topic} | particion {tp.partition}")
+
+    return particiones_asignadas
 
 
 def iniciar_consumidor():
@@ -46,25 +99,11 @@ def iniciar_consumidor():
 
     ruta_json, ruta_csv, ruta_sql = obtener_rutas_archivos()
 
+    print("Conectando con brokers Kafka por Tailscale en puerto 9092...")
+
     try:
-        print("Conectando con brokers Kafka por Tailscale en puerto 9094...")
-
-        consumer = KafkaConsumer(
-            *TOPICOS,
-            bootstrap_servers=BROKERS_CLUSTER,
-            auto_offset_reset="earliest",
-            enable_auto_commit=True,
-
-            # Si quieres repetir una prueba desde cero, cambia este nombre.
-            # No uses el mismo grupo si ya consumiste antes.
-            group_id="grupo-final-uaa-captura-v1",
-
-            value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-            request_timeout_ms=60000,
-            session_timeout_ms=30000,
-            heartbeat_interval_ms=10000,
-            max_poll_records=1000
-        )
+        consumer = crear_consumer()
+        asignar_particiones(consumer)
 
         print("\nConexion establecida con exito.")
         print(f"Guardando JSON en: {ruta_json}")
@@ -126,75 +165,88 @@ CREATE TABLE personas (
 
 """)
 
-            for mensaje in consumer:
-                registro = mensaje.value
-                total_recibidos += 1
+            while total_recibidos < 100000:
+                mensajes = consumer.poll(timeout_ms=3000, max_records=2000)
 
-                f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                if not mensajes:
+                    print("Sin mensajes nuevos por ahora, esperando...")
+                    continue
 
-                escritor_csv.writerow({
-                    "id_persona": registro["id_persona"],
-                    "nombre": registro["nombre"],
-                    "apellido": registro["apellido"],
-                    "edad": registro["edad"],
-                    "genero": registro["genero"],
-                    "ciudad": registro["ciudad"],
-                    "estado": registro["estado"],
-                    "ocupacion": registro["ocupacion"],
-                    "nivel_estudios": registro["nivel_estudios"],
-                    "ingreso_mensual": registro["ingreso_mensual"],
-                    "antiguedad_anos": registro["antiguedad_anos"],
-                    "activo": registro["activo"]
-                })
+                for tp, lista_mensajes in mensajes.items():
+                    for mensaje in lista_mensajes:
+                        registro = mensaje.value
+                        total_recibidos += 1
 
-                activo_sql = 1 if registro["activo"] else 0
+                        f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
 
-                linea_sql = (
-                    "INSERT INTO personas "
-                    "(id_persona, nombre, apellido, edad, genero, ciudad, estado, "
-                    "ocupacion, nivel_estudios, ingreso_mensual, antiguedad_anos, activo) "
-                    f"VALUES ("
-                    f"{registro['id_persona']}, "
-                    f"'{limpiar_sql(registro['nombre'])}', "
-                    f"'{limpiar_sql(registro['apellido'])}', "
-                    f"{registro['edad']}, "
-                    f"'{limpiar_sql(registro['genero'])}', "
-                    f"'{limpiar_sql(registro['ciudad'])}', "
-                    f"'{limpiar_sql(registro['estado'])}', "
-                    f"'{limpiar_sql(registro['ocupacion'])}', "
-                    f"'{limpiar_sql(registro['nivel_estudios'])}', "
-                    f"{registro['ingreso_mensual']}, "
-                    f"{registro['antiguedad_anos']}, "
-                    f"{activo_sql}"
-                    f");\n"
-                )
+                        escritor_csv.writerow({
+                            "id_persona": registro["id_persona"],
+                            "nombre": registro["nombre"],
+                            "apellido": registro["apellido"],
+                            "edad": registro["edad"],
+                            "genero": registro["genero"],
+                            "ciudad": registro["ciudad"],
+                            "estado": registro["estado"],
+                            "ocupacion": registro["ocupacion"],
+                            "nivel_estudios": registro["nivel_estudios"],
+                            "ingreso_mensual": registro["ingreso_mensual"],
+                            "antiguedad_anos": registro["antiguedad_anos"],
+                            "activo": registro["activo"]
+                        })
 
-                f_sql.write(linea_sql)
+                        activo_sql = 1 if registro["activo"] else 0
 
-                if total_recibidos % 50 == 0:
-                    sys.stdout.write(
-                        f"\rCanal: {mensaje.topic} | "
-                        f"Registro #{registro['id_persona']} | "
-                        f"{registro['nombre']} | "
-                        f"{registro['ocupacion']}"
-                    )
-                    sys.stdout.flush()
+                        linea_sql = (
+                            "INSERT INTO personas "
+                            "(id_persona, nombre, apellido, edad, genero, ciudad, estado, "
+                            "ocupacion, nivel_estudios, ingreso_mensual, antiguedad_anos, activo) "
+                            f"VALUES ("
+                            f"{registro['id_persona']}, "
+                            f"'{limpiar_sql(registro['nombre'])}', "
+                            f"'{limpiar_sql(registro['apellido'])}', "
+                            f"{registro['edad']}, "
+                            f"'{limpiar_sql(registro['genero'])}', "
+                            f"'{limpiar_sql(registro['ciudad'])}', "
+                            f"'{limpiar_sql(registro['estado'])}', "
+                            f"'{limpiar_sql(registro['ocupacion'])}', "
+                            f"'{limpiar_sql(registro['nivel_estudios'])}', "
+                            f"{registro['ingreso_mensual']}, "
+                            f"{registro['antiguedad_anos']}, "
+                            f"{activo_sql}"
+                            f");\n"
+                        )
 
-                if total_recibidos % 10000 == 0:
-                    f_json.flush()
-                    f_csv.flush()
-                    f_sql.flush()
-                    print(f"\n\nHITO: {total_recibidos} registros guardados correctamente.\n")
+                        f_sql.write(linea_sql)
 
-                if total_recibidos >= 100000:
-                    f_json.flush()
-                    f_csv.flush()
-                    f_sql.flush()
+                        if total_recibidos % 50 == 0:
+                            sys.stdout.write(
+                                f"\rCanal: {mensaje.topic} | "
+                                f"Particion: {mensaje.partition} | "
+                                f"Registro #{registro['id_persona']} | "
+                                f"{registro['nombre']} | "
+                                f"Total: {total_recibidos}"
+                            )
+                            sys.stdout.flush()
 
-                    print("\n\n=========================================================")
-                    print("META COMPLETADA: 100,000 registros guardados en JSON, CSV y SQL.")
-                    print("=========================================================")
-                    break
+                        if total_recibidos % 10000 == 0:
+                            f_json.flush()
+                            f_csv.flush()
+                            f_sql.flush()
+                            print(f"\n\nHITO: {total_recibidos} registros guardados correctamente.\n")
+
+                        if total_recibidos >= 100000:
+                            break
+
+                    if total_recibidos >= 100000:
+                        break
+
+            f_json.flush()
+            f_csv.flush()
+            f_sql.flush()
+
+            print("\n\n=========================================================")
+            print("META COMPLETADA: 100,000 registros guardados en JSON, CSV y SQL.")
+            print("=========================================================")
 
     except KeyboardInterrupt:
         print("\nConsumidor detenido manualmente.")
