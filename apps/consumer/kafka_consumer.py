@@ -10,9 +10,9 @@ def iniciar_consumidor():
 
     # CLÚSTER REMOTO: IPs de Tailscale oficiales de tu equipo
     BROKERS_CLUSTER = [
-        '100.115.62.37:9092',  # Osvaldo (Nodo 1)
-        '100.123.126.75:9092', # Brayan (Nodo 2)
-        '100.72.209.77:9092'   # Obed (Nodo 3)
+        '100.115.62.37:9094',  # Osvaldo (Nodo 1)
+        '100.123.126.75:9094', # Brayan (Nodo 2)
+        '100.72.209.77:9094'   # Obed (Nodo 3)
     ]
 
     ruta_base = "/opt/spark/shared-data/"

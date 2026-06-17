@@ -24,9 +24,9 @@ def iniciar_productor():
 
     # CLÚSTER REMOTO: IPs fijas asignadas por Tailscale para el proyecto
     BROKERS_CLUSTER = [
-        '100.115.62.37:9092',  # Osvaldo (Nodo 1)
-        '100.123.126.75:9092', # Brayan (Nodo 2)
-        '100.72.209.77:9092'   # Obed (Nodo 3 - Tu máquina)
+        '100.115.62.37:9094',  # Osvaldo (Nodo 1)
+        '100.123.126.75:9094', # Brayan (Nodo 2)
+        '100.72.209.77:9094'   # Obed (Nodo 3 - Tu máquina)
     ]
 
     try:
@@ -34,7 +34,7 @@ def iniciar_productor():
         producer = KafkaProducer(
             bootstrap_servers=BROKERS_CLUSTER,
             value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode('utf-8'),
-            acks='all',
+            acks='1',
             retries=5,
             max_block_ms=60000,         # Aumentado a 60 seg para dar tiempo a la sincronización inicial
             request_timeout_ms=30000,    # 30 seg de tolerancia para confirmaciones de red

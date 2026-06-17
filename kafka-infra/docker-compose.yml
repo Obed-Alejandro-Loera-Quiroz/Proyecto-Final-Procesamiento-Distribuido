@@ -1,45 +1,38 @@
+version: '3.8'
+
 services:
   kafka-nodo:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-cluster-nodo-${NODO_ID}
     env_file: .env
     restart: unless-stopped
-    network_mode: "host" # Crucial: Se amarra directamente a la interfaz virtual de Tailscale en Linux Mint
+    network_mode: "host" # Mapeo directo sobre las interfaces de Linux Mint
     environment:
-      # Configuración del ID único del nodo (se lee del .env local de cada uno: 1, 2 o 3)
       KAFKA_NODE_ID: ${NODO_ID}
-      
-      # Roles del nodo: actúan como controlador (KRaft) y broker (manejador de datos)
       KAFKA_PROCESS_ROLES: 'broker,controller'
       
-      # 🔥 CONFIGURACIÓN REMOTA ABSOLUTA: Las 3 IPs reales de Tailscale cableadas rígidamente
+      # Comunicación KRaft unificada usando el puerto 9093
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@100.115.62.37:9093,2@100.123.126.75:9093,3@100.72.209.77:9093'
       
-      # Protocolos de conexión en la red
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      # Se abren dos listeners: INTERNAL (puerto 9092 para brokers) y EXTERNAL (puerto 9094 para scripts de Python)
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093'
       
-      # Cómo se va a anunciar tu nodo a los demás en base a tu IP del .env
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://${LAPTOP_IP}:9092'
+      # Cómo se anuncian dinámicamente según la IP de Tailscale del .env de cada quien
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://${LAPTOP_IP}:9092,EXTERNAL://${LAPTOP_IP}:9094'
       
-      # Configuración interna para los listeners de Confluent
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
       
-      # Identificador único del clúster (idéntico para los 3)
       CLUSTER_ID: '4L62YDgNTki3A6wV3lExlw=='
       KAFKA_CLUSTER_ID: '4L62YDgNTki3A6wV3lExlw=='
       
-      # Políticas de replicación estrictas para el clúster de 3 nodos (Tolerancia a fallos)
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
       KAFKA_CONTROLLER_SNAPSHOT_CHUNKS_BYTES: 268435456
-      
-      # Configuración de logs limpia para la consola
       KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.server=INFO,org.apache.kafka=WARN"
     volumes:
-      # Mantiene los datos persistentes en tu disco local
       - kafka-data:/var/lib/kafka/data
 
 volumes:

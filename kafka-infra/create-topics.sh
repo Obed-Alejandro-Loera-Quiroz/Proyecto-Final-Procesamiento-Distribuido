@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Apuntamos a tu IP de Tailscale (Tu laptop es el nodo 3)
-BROKER="100.72.209.77:9092"
+# 🔥 CORRECCIÓN CRÍTICA: Apuntamos localmente a la interfaz interna del contenedor.
+# Como el comando se ejecuta 'dentro' de Docker, 127.0.0.1:9092 es la vía directa más rápida.
+BROKER="127.0.0.1:9092"
 
 echo "========================================================="
 echo "Creando los Tópicos Distribuidos en Apache Kafka (KRaft)"
@@ -12,8 +13,8 @@ crear_topico() {
     echo "-> Creando tópico: ${NOMBRE_TOPICO}..."
     
     # Se usa docker exec apuntando a tu contenedor del nodo 3
-    # Particiones: 3 (una para cada máquina física)
-    # Factor de replicación: 3 (los datos se copian en las 3 laptops por seguridad)
+    # Particiones: 3 (una para cada máquina física de la UAA)
+    # Factor de replicación: 3 (los datos se copian en las 3 laptops por tolerancia a fallos)
     docker exec kafka-cluster-nodo-3 kafka-topics \
         --bootstrap-server $BROKER \
         --create \
@@ -22,8 +23,8 @@ crear_topico() {
         --replication-factor 3
 }
 
-# --- TÓPICOS ALINEADOS A LO QUE PIDE EL PROFESOR ---
-# Crearemos 3 tópicos principales para segmentar los datos de las personas (cumple con "al menos 3")
+# --- TÓPICOS ALINEADOS A LOS REQUERIMIENTOS DEL PROFESOR ---
+# Creación de los 3 tópicos principales para segmentar los datos masivos
 crear_topico "datos-usuarios-zona1"
 crear_topico "datos-usuarios-zona2"
 crear_topico "datos-usuarios-zona3"
