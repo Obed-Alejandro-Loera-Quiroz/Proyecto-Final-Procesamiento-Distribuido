@@ -3,41 +3,119 @@ import json
 import os
 import sys
 import time
+import getpass
 from kafka import KafkaConsumer, TopicPartition
 
 
-# Usamos Obed como broker inicial.
-# Kafka obtiene la metadata de los demas nodos automaticamente.
 BROKERS_CLUSTER = [
-    "100.72.209.77:9092"    # Obed - Nodo 3
+    "100.72.209.77:9092"  # Obed - Nodo 3 como broker inicial
 ]
 
-TOPICOS = [
-    "datos-usuarios-zona1",
-    "datos-usuarios-zona2",
-    "datos-usuarios-zona3"
+# Particiones donde el producer manda los datos.
+# Las dejamos fijas porque ya probaron que estas particiones funcionan bien.
+PARTICIONES_LECTURA = [
+    TopicPartition("datos-usuarios-zona1", 2),
+    TopicPartition("datos-usuarios-zona2", 1),
+    TopicPartition("datos-usuarios-zona3", 2)
+]
+
+DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
+MODO_LECTURA = os.environ.get("MODO_LECTURA", "nuevo").lower()
+
+
+def obtener_nombre_consumidor():
+    if len(sys.argv) > 1:
+        return sys.argv[1].strip().lower()
+
+    return os.environ.get("CONSUMER_NAME", getpass.getuser()).strip().lower()
+
+
+NOMBRE_CONSUMIDOR = obtener_nombre_consumidor()
+GROUP_ID = f"grupo-demo-{DEMO_ID}-{NOMBRE_CONSUMIDOR}"
+
+
+CAMPOS = [
+    "id_persona",
+    "demo_id",
+    "topic_destino",
+    "zona",
+    "nombre",
+    "apellido",
+    "edad",
+    "genero",
+    "ciudad",
+    "estado",
+    "ocupacion",
+    "nivel_estudios",
+    "ingreso_mensual",
+    "antiguedad_anos",
+    "activo",
+    "fecha_registro"
 ]
 
 
 def obtener_rutas_archivos():
-    ruta_base = os.environ.get("DATA_DIR")
-
-    if not ruta_base:
-        ruta_base = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "shared-data")
-        )
+    ruta_base = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "shared-data", "demo")
+    )
 
     os.makedirs(ruta_base, exist_ok=True)
 
-    return (
-        os.path.join(ruta_base, "dataset.json"),
-        os.path.join(ruta_base, "dataset_respaldo.csv"),
-        os.path.join(ruta_base, "dataset_inserts.sql")
-    )
+    ruta_json = os.path.join(ruta_base, f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.json")
+    ruta_csv = os.path.join(ruta_base, f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.csv")
+    ruta_sql = os.path.join(ruta_base, f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.sql")
+    ruta_offsets = os.path.join(ruta_base, f"offsets_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.json")
+
+    return ruta_json, ruta_csv, ruta_sql, ruta_offsets
+
+
+def clave_offset(tp):
+    return f"{tp.topic}-{tp.partition}"
+
+
+def cargar_offsets_locales(ruta_offsets):
+    if not os.path.exists(ruta_offsets):
+        return {}
+
+    try:
+        with open(ruta_offsets, "r", encoding="utf-8") as archivo:
+            return json.load(archivo)
+    except Exception:
+        return {}
+
+
+def guardar_offsets_locales(ruta_offsets, offsets):
+    with open(ruta_offsets, "w", encoding="utf-8") as archivo:
+        json.dump(offsets, archivo, indent=4)
 
 
 def limpiar_sql(valor):
     return str(valor).replace("'", "''")
+
+
+def archivo_vacio_o_no_existe(ruta):
+    return not os.path.exists(ruta) or os.path.getsize(ruta) == 0
+
+
+def normalizar_registro(registro, topic):
+    return {
+        "id_persona": registro.get("id_persona", 0),
+        "demo_id": registro.get("demo_id", DEMO_ID),
+        "topic_destino": registro.get("topic_destino", topic),
+        "zona": registro.get("zona", topic),
+        "nombre": registro.get("nombre", ""),
+        "apellido": registro.get("apellido", ""),
+        "edad": registro.get("edad", 0),
+        "genero": registro.get("genero", ""),
+        "ciudad": registro.get("ciudad", ""),
+        "estado": registro.get("estado", ""),
+        "ocupacion": registro.get("ocupacion", ""),
+        "nivel_estudios": registro.get("nivel_estudios", ""),
+        "ingreso_mensual": registro.get("ingreso_mensual", 0),
+        "antiguedad_anos": registro.get("antiguedad_anos", 0),
+        "activo": registro.get("activo", False),
+        "fecha_registro": registro.get("fecha_registro", "")
+    }
 
 
 def crear_consumer():
@@ -48,68 +126,137 @@ def crear_consumer():
 
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
 
-        # No usamos group_id para evitar problemas con offsets viejos.
-        group_id=None,
+        # Kafka recordara el avance por este grupo.
+        group_id=GROUP_ID,
+
+        # Si el grupo es nuevo, no lee basura vieja.
+        auto_offset_reset="latest",
+
+        # Commit manual despues de guardar archivos.
         enable_auto_commit=False,
-        auto_offset_reset="earliest",
 
         request_timeout_ms=120000,
-        max_poll_records=2000,
-        consumer_timeout_ms=10000
+        max_poll_records=500
     )
 
 
-def asignar_particiones(consumer):
-    particiones_asignadas = []
+def configurar_offsets(consumer, ruta_offsets):
+    offsets_locales = cargar_offsets_locales(ruta_offsets)
 
-    print("Buscando particiones de los topics...")
+    beginning_offsets = consumer.beginning_offsets(PARTICIONES_LECTURA)
+    end_offsets = consumer.end_offsets(PARTICIONES_LECTURA)
 
-    for topico in TOPICOS:
-        particiones = None
-
-        for intento in range(10):
-            particiones = consumer.partitions_for_topic(topico)
-
-            if particiones:
-                break
-
-            print(f"Esperando metadata del topic {topico}... intento {intento + 1}/10")
-            time.sleep(2)
-
-        if not particiones:
-            raise Exception(f"No se pudieron obtener particiones del topic: {topico}")
-
-        for particion in particiones:
-            particiones_asignadas.append(TopicPartition(topico, particion))
-
-    consumer.assign(particiones_asignadas)
-    consumer.seek_to_beginning(*particiones_asignadas)
-
-    print("\nParticiones asignadas manualmente:")
-    for tp in particiones_asignadas:
+    print("\nParticiones asignadas:")
+    for tp in PARTICIONES_LECTURA:
         print(f"-> {tp.topic} | particion {tp.partition}")
 
-    return particiones_asignadas
+    print("\nOffsets actuales en Kafka:")
+    for tp in PARTICIONES_LECTURA:
+        print(
+            f"-> {tp.topic} particion {tp.partition} | "
+            f"inicio: {beginning_offsets[tp]} | fin: {end_offsets[tp]}"
+        )
+
+    print("\nPunto de lectura:")
+
+    for tp in PARTICIONES_LECTURA:
+        key = clave_offset(tp)
+        offset = None
+        origen = None
+
+        try:
+            offset_kafka = consumer.committed(tp)
+
+            if offset_kafka is not None:
+                offset = int(offset_kafka)
+                origen = "offset guardado en Kafka"
+
+        except Exception:
+            offset = None
+
+        if offset is None and key in offsets_locales:
+            offset = int(offsets_locales[key])
+            origen = "offset local de respaldo"
+
+        if offset is None:
+            if MODO_LECTURA == "historico":
+                offset = beginning_offsets[tp]
+                origen = "inicio del topic"
+            else:
+                offset = end_offsets[tp]
+                origen = "mensajes nuevos"
+
+        if offset < beginning_offsets[tp]:
+            offset = beginning_offsets[tp]
+
+        if offset > end_offsets[tp]:
+            offset = end_offsets[tp]
+
+        consumer.seek(tp, offset)
+        offsets_locales[key] = offset
+
+        print(f"-> {key}: {origen}, offset {offset}")
+
+    guardar_offsets_locales(ruta_offsets, offsets_locales)
+
+    return offsets_locales
+
+
+def guardar_registro_sql(f_sql, registro):
+    activo_sql = 1 if registro["activo"] else 0
+
+    linea_sql = (
+        "INSERT INTO personas_demo "
+        "(id_persona, demo_id, topic_destino, zona, nombre, apellido, edad, genero, ciudad, estado, "
+        "ocupacion, nivel_estudios, ingreso_mensual, antiguedad_anos, activo, fecha_registro) "
+        f"VALUES ("
+        f"{registro['id_persona']}, "
+        f"'{limpiar_sql(registro['demo_id'])}', "
+        f"'{limpiar_sql(registro['topic_destino'])}', "
+        f"'{limpiar_sql(registro['zona'])}', "
+        f"'{limpiar_sql(registro['nombre'])}', "
+        f"'{limpiar_sql(registro['apellido'])}', "
+        f"{registro['edad']}, "
+        f"'{limpiar_sql(registro['genero'])}', "
+        f"'{limpiar_sql(registro['ciudad'])}', "
+        f"'{limpiar_sql(registro['estado'])}', "
+        f"'{limpiar_sql(registro['ocupacion'])}', "
+        f"'{limpiar_sql(registro['nivel_estudios'])}', "
+        f"{registro['ingreso_mensual']}, "
+        f"{registro['antiguedad_anos']}, "
+        f"{activo_sql}, "
+        f"'{limpiar_sql(registro['fecha_registro'])}'"
+        f");\n"
+    )
+
+    f_sql.write(linea_sql)
 
 
 def iniciar_consumidor():
     print("=========================================================")
-    print("Iniciando Consumidor: CAPTURA MULTI-FORMATO EN TIEMPO REAL")
+    print("CONSUMIDOR KAFKA - DEMO DISTRIBUIDA")
     print("=========================================================")
+    print(f"Consumidor: {NOMBRE_CONSUMIDOR}")
+    print(f"Demo ID: {DEMO_ID}")
+    print(f"Group ID: {GROUP_ID}")
+    print(f"Modo lectura: {MODO_LECTURA}")
+    print("Conectando con Kafka por Tailscale en puerto 9092...")
 
-    ruta_json, ruta_csv, ruta_sql = obtener_rutas_archivos()
-
-    print("Conectando con brokers Kafka por Tailscale en puerto 9092...")
+    ruta_json, ruta_csv, ruta_sql, ruta_offsets = obtener_rutas_archivos()
 
     try:
         consumer = crear_consumer()
-        asignar_particiones(consumer)
+        consumer.assign(PARTICIONES_LECTURA)
+
+        offsets_actuales = configurar_offsets(consumer, ruta_offsets)
 
         print("\nConexion establecida con exito.")
+        print("Si este consumidor se desconecta, al volver usa el mismo DEMO_ID y el mismo nombre.")
         print(f"Guardando JSON en: {ruta_json}")
         print(f"Guardando CSV en:  {ruta_csv}")
         print(f"Guardando SQL en:  {ruta_sql}")
-        print("\nEsperando datos desde Kafka...\n")
+        print(f"Archivo de offsets: {ruta_offsets}")
+        print("\nEsperando mensajes...\n")
 
     except Exception as e:
         print(f"Error al iniciar el consumidor: {e}")
@@ -117,39 +264,30 @@ def iniciar_consumidor():
 
     total_recibidos = 0
 
-    campos = [
-        "id_persona",
-        "nombre",
-        "apellido",
-        "edad",
-        "genero",
-        "ciudad",
-        "estado",
-        "ocupacion",
-        "nivel_estudios",
-        "ingreso_mensual",
-        "antiguedad_anos",
-        "activo"
-    ]
-
     try:
-        with open(ruta_json, "w", encoding="utf-8") as f_json, \
-             open(ruta_csv, "w", encoding="utf-8", newline="") as f_csv, \
-             open(ruta_sql, "w", encoding="utf-8") as f_sql:
+        escribir_header_csv = archivo_vacio_o_no_existe(ruta_csv)
+        escribir_header_sql = archivo_vacio_o_no_existe(ruta_sql)
 
-            escritor_csv = csv.DictWriter(f_csv, fieldnames=campos)
-            escritor_csv.writeheader()
+        with open(ruta_json, "a", encoding="utf-8") as f_json, \
+             open(ruta_csv, "a", encoding="utf-8", newline="") as f_csv, \
+             open(ruta_sql, "a", encoding="utf-8") as f_sql:
 
-            f_sql.write("-- =========================================================\n")
-            f_sql.write("-- DATASET GENERADO AUTOMATICAMENTE POR KAFKA\n")
-            f_sql.write("-- PROYECTO FINAL DE PROCESAMIENTO DISTRIBUIDO\n")
-            f_sql.write("-- =========================================================\n\n")
+            escritor_csv = csv.DictWriter(f_csv, fieldnames=CAMPOS)
 
-            f_sql.write("DROP TABLE IF EXISTS personas;\n\n")
+            if escribir_header_csv:
+                escritor_csv.writeheader()
 
-            f_sql.write("""
-CREATE TABLE personas (
-    id_persona INT PRIMARY KEY,
+            if escribir_header_sql:
+                f_sql.write("-- =========================================================\n")
+                f_sql.write("-- DATASET DEMO GENERADO POR APACHE KAFKA\n")
+                f_sql.write("-- PROYECTO FINAL DE PROCESAMIENTO DISTRIBUIDO\n")
+                f_sql.write("-- =========================================================\n\n")
+                f_sql.write("""
+CREATE TABLE IF NOT EXISTS personas_demo (
+    id_persona INT,
+    demo_id VARCHAR(100),
+    topic_destino VARCHAR(100),
+    zona VARCHAR(100),
     nombre VARCHAR(100),
     apellido VARCHAR(100),
     edad INT,
@@ -160,13 +298,21 @@ CREATE TABLE personas (
     nivel_estudios VARCHAR(100),
     ingreso_mensual DECIMAL(10,2),
     antiguedad_anos INT,
-    activo BOOLEAN
+    activo BOOLEAN,
+    fecha_registro VARCHAR(30)
 );
 
 """)
 
-            while total_recibidos < 100000:
-                mensajes = consumer.poll(timeout_ms=3000, max_records=2000)
+            while True:
+                try:
+                    mensajes = consumer.poll(timeout_ms=3000, max_records=500)
+
+                except Exception as e:
+                    print(f"Error temporal al consultar Kafka: {e}")
+                    print("Reintentando en 3 segundos...")
+                    time.sleep(3)
+                    continue
 
                 if not mensajes:
                     print("Sin mensajes nuevos por ahora, esperando...")
@@ -174,82 +320,47 @@ CREATE TABLE personas (
 
                 for tp, lista_mensajes in mensajes.items():
                     for mensaje in lista_mensajes:
-                        registro = mensaje.value
+                        registro = normalizar_registro(mensaje.value, mensaje.topic)
                         total_recibidos += 1
 
                         f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                        escritor_csv.writerow(registro)
+                        guardar_registro_sql(f_sql, registro)
 
-                        escritor_csv.writerow({
-                            "id_persona": registro["id_persona"],
-                            "nombre": registro["nombre"],
-                            "apellido": registro["apellido"],
-                            "edad": registro["edad"],
-                            "genero": registro["genero"],
-                            "ciudad": registro["ciudad"],
-                            "estado": registro["estado"],
-                            "ocupacion": registro["ocupacion"],
-                            "nivel_estudios": registro["nivel_estudios"],
-                            "ingreso_mensual": registro["ingreso_mensual"],
-                            "antiguedad_anos": registro["antiguedad_anos"],
-                            "activo": registro["activo"]
-                        })
-
-                        activo_sql = 1 if registro["activo"] else 0
-
-                        linea_sql = (
-                            "INSERT INTO personas "
-                            "(id_persona, nombre, apellido, edad, genero, ciudad, estado, "
-                            "ocupacion, nivel_estudios, ingreso_mensual, antiguedad_anos, activo) "
-                            f"VALUES ("
-                            f"{registro['id_persona']}, "
-                            f"'{limpiar_sql(registro['nombre'])}', "
-                            f"'{limpiar_sql(registro['apellido'])}', "
-                            f"{registro['edad']}, "
-                            f"'{limpiar_sql(registro['genero'])}', "
-                            f"'{limpiar_sql(registro['ciudad'])}', "
-                            f"'{limpiar_sql(registro['estado'])}', "
-                            f"'{limpiar_sql(registro['ocupacion'])}', "
-                            f"'{limpiar_sql(registro['nivel_estudios'])}', "
-                            f"{registro['ingreso_mensual']}, "
-                            f"{registro['antiguedad_anos']}, "
-                            f"{activo_sql}"
-                            f");\n"
-                        )
-
-                        f_sql.write(linea_sql)
+                        offsets_actuales[clave_offset(tp)] = mensaje.offset + 1
 
                         if total_recibidos % 50 == 0:
-                            sys.stdout.write(
-                                f"\rCanal: {mensaje.topic} | "
-                                f"Particion: {mensaje.partition} | "
-                                f"Registro #{registro['id_persona']} | "
-                                f"{registro['nombre']} | "
-                                f"Total: {total_recibidos}"
-                            )
-                            sys.stdout.flush()
-
-                        if total_recibidos % 10000 == 0:
                             f_json.flush()
                             f_csv.flush()
                             f_sql.flush()
-                            print(f"\n\nHITO: {total_recibidos} registros guardados correctamente.\n")
+                            guardar_offsets_locales(ruta_offsets, offsets_actuales)
 
-                        if total_recibidos >= 100000:
-                            break
+                            try:
+                                consumer.commit()
+                                estado_commit = "commit Kafka OK"
+                            except Exception:
+                                estado_commit = "commit Kafka fallo, offset local guardado"
 
-                    if total_recibidos >= 100000:
-                        break
-
-            f_json.flush()
-            f_csv.flush()
-            f_sql.flush()
-
-            print("\n\n=========================================================")
-            print("META COMPLETADA: 100,000 registros guardados en JSON, CSV y SQL.")
-            print("=========================================================")
+                            print(
+                                f"{NOMBRE_CONSUMIDOR} recibio {total_recibidos} mensajes en esta sesion | "
+                                f"Topic: {mensaje.topic} | "
+                                f"Particion: {mensaje.partition} | "
+                                f"Offset: {mensaje.offset} | "
+                                f"Registro: {registro['id_persona']} | "
+                                f"{estado_commit}"
+                            )
 
     except KeyboardInterrupt:
         print("\nConsumidor detenido manualmente.")
+        print("Guardando offsets antes de cerrar...")
+
+        try:
+            guardar_offsets_locales(ruta_offsets, offsets_actuales)
+            consumer.commit()
+            print("Offsets guardados correctamente.")
+        except Exception:
+            guardar_offsets_locales(ruta_offsets, offsets_actuales)
+            print("Offset local guardado. Kafka no confirmo commit, pero se puede continuar.")
 
     except Exception as e:
         print(f"\nError durante el consumo de datos: {e}")

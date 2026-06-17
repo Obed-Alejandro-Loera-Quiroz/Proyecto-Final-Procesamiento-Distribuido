@@ -1,44 +1,50 @@
 import json
 import time
 import random
+import os
+from datetime import datetime
 from kafka import KafkaProducer
 from faker import Faker
 
 
 BROKERS_CLUSTER = [
-    "100.72.209.77:9092"    # Obed - Nodo 3
+    "100.72.209.77:9092"  # Obed - Nodo 3 como broker inicial
 ]
 
-TOPICOS = [
-    "datos-usuarios-zona1",
-    "datos-usuarios-zona2",
-    "datos-usuarios-zona3"
+# Particiones que ya probaron que funcionan bien.
+TOPICOS_DESTINO = [
+    {
+        "topic": "datos-usuarios-zona1",
+        "partition": 2,
+        "zona": "zona1"
+    },
+    {
+        "topic": "datos-usuarios-zona2",
+        "partition": 1,
+        "zona": "zona2"
+    },
+    {
+        "topic": "datos-usuarios-zona3",
+        "partition": 2,
+        "zona": "zona3"
+    }
 ]
 
-# Particiones cuyo líder es Obed según el describe:
-# zona1 particion 2 -> Leader 3
-# zona2 particion 1 -> Leader 3
-# zona3 particion 2 -> Leader 3
-PARTICIONES_FIJAS = {
-    "datos-usuarios-zona1": 2,
-    "datos-usuarios-zona2": 1,
-    "datos-usuarios-zona3": 2
-}
+DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
+
+TOTAL_REGISTROS = int(os.environ.get("TOTAL_REGISTROS", "100000"))
+
+# Lo dejamos un poco lento para que el profe pueda ver la desconexion.
+PAUSA_CADA = int(os.environ.get("PAUSA_CADA", "100"))
+SEGUNDOS_PAUSA = float(os.environ.get("SEGUNDOS_PAUSA", "0.10"))
 
 errores_envio = 0
-ultimo_meta = {
-    "topic": "",
-    "partition": -1
+
+conteo_por_topico = {
+    "datos-usuarios-zona1": 0,
+    "datos-usuarios-zona2": 0,
+    "datos-usuarios-zona3": 0
 }
-
-
-def al_recibir_meta(metadata):
-    global ultimo_meta
-
-    ultimo_meta = {
-        "topic": metadata.topic,
-        "partition": metadata.partition
-    }
 
 
 def al_error_envio(error):
@@ -48,7 +54,11 @@ def al_error_envio(error):
     print(f"\nError al enviar mensaje a Kafka: {error}")
 
 
-def crear_registro(fake, id_persona):
+def seleccionar_destino(conteo):
+    return TOPICOS_DESTINO[conteo % len(TOPICOS_DESTINO)]
+
+
+def crear_registro(fake, id_persona, destino):
     estados = [
         "Aguascalientes",
         "Jalisco",
@@ -84,6 +94,9 @@ def crear_registro(fake, id_persona):
 
     return {
         "id_persona": id_persona,
+        "demo_id": DEMO_ID,
+        "topic_destino": destino["topic"],
+        "zona": destino["zona"],
         "nombre": fake.first_name_female() if genero == "F" else fake.first_name_male(),
         "apellido": fake.last_name(),
         "edad": random.randint(18, 65),
@@ -94,105 +107,101 @@ def crear_registro(fake, id_persona):
         "nivel_estudios": random.choice(estudios),
         "ingreso_mensual": round(random.uniform(8000, 65000), 2),
         "antiguedad_anos": random.randint(1, 15),
-        "activo": random.choice([True, False])
+        "activo": random.choice([True, False]),
+        "fecha_registro": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
 
-def obtener_topico(conteo):
-    if conteo % 3 == 0:
-        return "datos-usuarios-zona1"
-    elif conteo % 3 == 1:
-        return "datos-usuarios-zona2"
-    else:
-        return "datos-usuarios-zona3"
+def crear_productor():
+    return KafkaProducer(
+        bootstrap_servers=BROKERS_CLUSTER,
+        security_protocol="PLAINTEXT",
+        api_version=(3, 5, 0),
+
+        value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
+
+        acks=1,
+        retries=3,
+        retry_backoff_ms=1000,
+
+        request_timeout_ms=60000,
+        delivery_timeout_ms=90000,
+        max_block_ms=60000,
+
+        batch_size=8192,
+        linger_ms=5,
+        max_in_flight_requests_per_connection=1
+    )
 
 
 def iniciar_productor():
     global errores_envio
 
     print("=========================================================")
-    print("Iniciando Productor: GENERANDO LOS DATOS")
+    print("PRODUCTOR KAFKA - GENERACION DISTRIBUIDA")
     print("=========================================================")
+    print(f"Demo ID: {DEMO_ID}")
+    print(f"Total de registros: {TOTAL_REGISTROS}")
+    print("Conectando con Kafka por Tailscale en puerto 9092...")
 
     fake = Faker("es_MX")
-
-    try:
-        print("Conectando con el cluster de Kafka por Tailscale en puerto 9092...")
-
-        producer = KafkaProducer(
-            bootstrap_servers=BROKERS_CLUSTER,
-            security_protocol="PLAINTEXT",
-            api_version=(3, 5, 0),
-
-            value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
-
-            acks=1,
-            retries=3,
-            retry_backoff_ms=1000,
-
-            request_timeout_ms=60000,
-            delivery_timeout_ms=90000,
-            max_block_ms=60000,
-
-            batch_size=8192,
-            linger_ms=5,
-            max_in_flight_requests_per_connection=1
-        )
-
-        print("Conexion exitosa con el cluster de Kafka.")
-
-    except Exception as e:
-        print(f"Error al conectar con el cluster: {e}")
-        return
-
-    total_registros = 100000
+    producer = None
     tiempo_inicio = time.time()
 
-    print(f"Generando {total_registros} registros distribuidos en 3 topicos...")
-
     try:
-        for conteo in range(total_registros):
-            id_persona = conteo + 1
-            registro = crear_registro(fake, id_persona)
+        producer = crear_productor()
 
-            topic = obtener_topico(conteo)
-            partition = PARTICIONES_FIJAS[topic]
+        print("Conexion exitosa con el cluster de Kafka.")
+        print("Enviando mensajes...\n")
+
+        for conteo in range(TOTAL_REGISTROS):
+            id_persona = conteo + 1
+            destino = seleccionar_destino(conteo)
+            registro = crear_registro(fake, id_persona, destino)
 
             future = producer.send(
-                topic,
+                destino["topic"],
                 value=registro,
-                partition=partition
+                partition=destino["partition"]
             )
 
-            future.add_callback(al_recibir_meta)
             future.add_errback(al_error_envio)
+            conteo_por_topico[destino["topic"]] += 1
 
-            # Imprime más seguido para saber que sí está avanzando.
+            if id_persona % PAUSA_CADA == 0:
+                time.sleep(SEGUNDOS_PAUSA)
+
             if id_persona % 1000 == 0:
                 producer.flush(timeout=60)
+
                 print(
-                    f"-> {id_persona} registros enviados. "
-                    f"Ultimo topico: {ultimo_meta['topic']} | "
-                    f"Particion: {ultimo_meta['partition']}"
+                    f"-> {id_persona} registros enviados | "
+                    f"zona1: {conteo_por_topico['datos-usuarios-zona1']} | "
+                    f"zona2: {conteo_por_topico['datos-usuarios-zona2']} | "
+                    f"zona3: {conteo_por_topico['datos-usuarios-zona3']}"
                 )
 
-            # Pequeña pausa para no saturar Tailscale.
-            if id_persona % 5000 == 0:
-                time.sleep(0.2)
-
         print("\nLiberando flujo final de red...")
-
         producer.flush(timeout=120)
         print("Flush final completado correctamente.")
 
     except KeyboardInterrupt:
         print("\nProductor detenido manualmente.")
 
+        if producer is not None:
+            try:
+                print("Enviando mensajes pendientes antes de cerrar...")
+                producer.flush(timeout=60)
+                print("Mensajes pendientes liberados.")
+            except Exception as e:
+                print(f"No se pudieron liberar todos los mensajes pendientes: {e}")
+
     except Exception as e:
         print(f"\nError durante la produccion de datos: {e}")
 
     finally:
-        producer.close(timeout=10)
+        if producer is not None:
+            producer.close(timeout=10)
 
     tiempo_total = time.time() - tiempo_inicio
 
