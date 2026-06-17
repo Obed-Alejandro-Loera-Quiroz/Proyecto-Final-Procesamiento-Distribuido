@@ -1,37 +1,68 @@
 #!/bin/bash
 
-# 🔥 CORRECCIÓN CRÍTICA: Apuntamos localmente a la interfaz interna del contenedor.
-# Como el comando se ejecuta 'dentro' de Docker, 127.0.0.1:9092 es la vía directa más rápida.
-BROKER="127.0.0.1:9092"
+set -e
+
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
+
+BROKER="${BROKER:-127.0.0.1:9092}"
+NODO_ID="${NODO_ID:-3}"
+CONTAINER_NAME="${CONTAINER_NAME:-kafka-cluster-nodo-${NODO_ID}}"
 
 echo "========================================================="
-echo "Creando los Tópicos Distribuidos en Apache Kafka (KRaft)"
+echo "Creando topicos distribuidos en Apache Kafka KRaft"
 echo "========================================================="
+echo "Contenedor usado: ${CONTAINER_NAME}"
+echo "Broker usado: ${BROKER}"
+echo "========================================================="
+
+echo "Verificando contenedor..."
+docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" || {
+    echo "Error: el contenedor ${CONTAINER_NAME} no esta activo."
+    echo "Primero ejecuta: docker compose up -d"
+    exit 1
+}
 
 crear_topico() {
     NOMBRE_TOPICO=$1
-    echo "-> Creando tópico: ${NOMBRE_TOPICO}..."
-    
-    # Se usa docker exec apuntando a tu contenedor del nodo 3
-    # Particiones: 3 (una para cada máquina física de la UAA)
-    # Factor de replicación: 3 (los datos se copian en las 3 laptops por tolerancia a fallos)
-    docker exec kafka-cluster-nodo-3 kafka-topics \
-        --bootstrap-server $BROKER \
+
+    echo ""
+    echo "Creando topico: ${NOMBRE_TOPICO}"
+
+    docker exec "${CONTAINER_NAME}" kafka-topics \
+        --bootstrap-server "${BROKER}" \
         --create \
-        --topic $NOMBRE_TOPICO \
+        --if-not-exists \
+        --topic "${NOMBRE_TOPICO}" \
         --partitions 3 \
         --replication-factor 3
 }
 
-# --- TÓPICOS ALINEADOS A LOS REQUERIMIENTOS DEL PROFESOR ---
-# Creación de los 3 tópicos principales para segmentar los datos masivos
 crear_topico "datos-usuarios-zona1"
 crear_topico "datos-usuarios-zona2"
 crear_topico "datos-usuarios-zona3"
 
+echo ""
 echo "========================================================="
-echo "¡Estructura de tópicos inicializada con éxito!"
+echo "Topicos inicializados."
 echo "========================================================="
 
-echo "Tópicos activos en tu clúster actual:"
-docker exec kafka-cluster-nodo-3 kafka-topics --bootstrap-server $BROKER --list
+echo ""
+echo "Lista de topicos activos:"
+docker exec "${CONTAINER_NAME}" kafka-topics \
+    --bootstrap-server "${BROKER}" \
+    --list
+
+echo ""
+echo "Descripcion de topicos:"
+docker exec "${CONTAINER_NAME}" kafka-topics \
+    --bootstrap-server "${BROKER}" \
+    --describe
+
+echo ""
+echo "========================================================="
+echo "Proceso terminado."
+echo "========================================================="
