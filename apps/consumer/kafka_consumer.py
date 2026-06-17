@@ -4,13 +4,14 @@ from kafka import KafkaConsumer
 
 def iniciar_consumidor():
     print("=========================================================")
-    print("Iniciando Consumidor: CAPTURA MULTI-FORMATO DESDE 5 TOPICS")
+    print("Iniciando Consumidor: CAPTURA MULTI-FORMATO DESDE 3 ZONAS")
     print("=========================================================")
 
+    # CLÚSTER REMOTO: Mismas IPs de Tailscale
     BROKERS_CLUSTER = [
-        '192.168.0.101:9092',
-        '192.168.0.102:9092',
-        '192.168.0.103:9092'
+        ':9092',
+        ':9092',
+        '100.72.209.77:9092'
     ]
 
     ruta_base = "/opt/spark/shared-data/"
@@ -21,22 +22,20 @@ def iniciar_consumidor():
     ruta_csv = os.path.join(ruta_base, "dataset_respaldo.csv")
 
     try:
-        # Suscripción explícita a los 5 tópicos creados en bash
+        # Suscripción explícita a los 3 tópicos de zonas en Tailscale
         consumer = KafkaConsumer(
-            'personas-bloque-A',
-            'personas-bloque-B',
-            'personas-bloque-C',
-            'personas-bloque-D',
-            'personas-bloque-E',
+            'datos-usuarios-zona1',
+            'datos-usuarios-zona2',
+            'datos-usuarios-zona3',
             bootstrap_servers=BROKERS_CLUSTER,
             auto_offset_reset='earliest',
             enable_auto_commit=True,
             group_id='grupo-final-uaa',
             value_deserializer=lambda x: json.loads(x.decode('utf-8'))
         )
-        print("¡Conexión Exitosa! Escuchando los 5 topics en paralelo...")
+        print("¡Conexión Exitosa! Escuchando los 3 topics en paralelo...")
         print(f"-> Formato JSON en: {ruta_json}")
-        print(f"-> Formato CSV (10 columnas) en: {ruta_csv}\n")
+        print(f"-> Formato CSV (12 columnas) en: {ruta_csv}\n")
     except Exception as e:
         print(f"❌ Error al conectar el consumidor: {e}")
         return
@@ -44,6 +43,7 @@ def iniciar_consumidor():
     total_recibidos = 0
 
     with open(ruta_json, 'w', encoding='utf-8') as f_json, open(ruta_csv, 'w', encoding='utf-8') as f_csv:
+        # Cabecera con las 12 columnas generadas por el productor
         f_csv.write("id_persona,nombre,apellido,edad,genero,ciudad,estado,ocupacion,nivel_estudios,ingreso_mensual,antiguedad_anos,activo\n")
         
         try:
@@ -61,11 +61,11 @@ def iniciar_consumidor():
                 total_recibidos += 1
                 
                 if total_recibidos % 10000 == 0:
-                    print(f"📥 [Clúster] {total_recibidos} registros Faker atrapados y respaldados en JSON y CSV.")
+                    print(f" [Clúster Tailscale] {total_recibidos} registros Faker atrapados y respaldados en JSON y CSV.")
                     
                 if total_recibidos >= 100000:
                     print("\n=========================================================")
-                    print("🎯 ¡META COMPLETADA! 100,000 registros guardados desde los 5 topics.")
+                    print(" META COMPLETADA! 100,000 registros guardados desde los 3 topics.")
                     print("=========================================================")
                     break
 

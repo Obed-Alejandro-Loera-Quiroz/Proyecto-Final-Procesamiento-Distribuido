@@ -17,15 +17,16 @@ def al_recibir_meta(metadata):
 
 def iniciar_productor():
     print("=========================================================")
-    print("Iniciando Productor: GENERACIÓN CON FAKER (5 TOPICS REALES)")
+    print("Iniciando Productor: GENERANDO LOS DATOS")
     print("=========================================================")
 
     fake = Faker('es_MX')
 
+    # CLÚSTER REMOTO: IPs fijas asignadas por Tailscale para el proyecto
     BROKERS_CLUSTER = [
-        '192.168.0.101:9092',  # Osvaldo
-        '192.168.0.102:9092',  # Pamela
-        '192.168.0.103:9092'   # Obed
+        '100.115.62.37:9092',  # Osvaldo (Nodo 1)
+        ':9092',  # Brayan (Nodo 2)
+        '100.72.209.77:9092'   # Obed (Nodo 3 - Tu máquina)
     ]
 
     try:
@@ -36,7 +37,7 @@ def iniciar_productor():
             retries=5,
             max_block_ms=5000
         )
-        print("¡Conexión exitosa con el clúster de Kafka!")
+        print("¡Conexión exitosa con el clúster de Kafka vía Tailscale!")
     except Exception as e:
         print(f"❌ Error al conectar con el clúster: {e}")
         return
@@ -45,7 +46,7 @@ def iniciar_productor():
     profesiones = ["Desarrollador", "Ingeniero", "Médico", "Administrador", "Contador", "Abogado", "Diseñador", "Docente"]
     estudios = ["Bachillerato", "Licenciatura", "Maestría", "Doctorado"]
 
-    print("Generando 100,000 registros únicos distribuidos equitativamente en 5 topics...")
+    print("Generando 100,000 registros únicos distribuidos equitativamente en 3 topics de zonas...")
     tiempo_inicio = time.time()
 
     for conteo in range(100000):
@@ -65,17 +66,13 @@ def iniciar_productor():
             "activo": random.choice([True, False])
         }
         
-        # Reparto cíclico en los 5 tópicos obligatorios
-        if conteo % 5 == 0:
-            producer.send('personas-bloque-A', value=registro_faker).add_callback(al_recibir_meta)
-        elif conteo % 5 == 1:
-            producer.send('personas-bloque-B', value=registro_faker).add_callback(al_recibir_meta)
-        elif conteo % 5 == 2:
-            producer.send('personas-bloque-C', value=registro_faker).add_callback(al_recibir_meta)
-        elif conteo % 5 == 3:
-            producer.send('personas-bloque-D', value=registro_faker).add_callback(al_recibir_meta)
+        # Reparto cíclico en los 3 tópicos requeridos por el profesor
+        if conteo % 3 == 0:
+            producer.send('datos-usuarios-zona1', value=registro_faker).add_callback(al_recibir_meta)
+        elif conteo % 3 == 1:
+            producer.send('datos-usuarios-zona2', value=registro_faker).add_callback(al_recibir_meta)
         else:
-            producer.send('personas-bloque-E', value=registro_faker).add_callback(al_recibir_meta)
+            producer.send('datos-usuarios-zona3', value=registro_faker).add_callback(al_recibir_meta)
 
         if (conteo + 1) % 10000 == 0:
             print(f"-> {conteo + 1} registros enviados. [Último topic: {ultimo_meta['topic']} | Nodo Broker ID: {ultimo_meta['node_id']}]")
@@ -86,7 +83,7 @@ def iniciar_productor():
 
     tiempo_total = time.time() - tiempo_inicio
     print("=========================================================")
-    print(f"¡Éxito total! 100,000 registros inyectados en los 5 topics.")
+    print(f"¡Éxito total! 100,000 registros inyectados en los 3 topics.")
     print(f"Tiempo de transmisión: {round(tiempo_total, 2)} segundos.")
     print("=========================================================")
 

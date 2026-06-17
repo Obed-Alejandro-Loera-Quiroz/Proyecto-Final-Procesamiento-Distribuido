@@ -7,14 +7,14 @@ def iniciar_analisis_spark():
     print("   Iniciando Motor Analítico Apache Spark (Fase 2)       ")
     print("=========================================================")
 
-    # Creamos la sesión apuntando al Master central del módem
+    # Creamos la sesión apuntando a tu IP Fija de Tailscale (Tú eres el Master)
     spark = SparkSession.builder \
         .appName("AnaliticaPoblacionUAA") \
-        .master("spark://192.168.0.103:7077") \
+        .master("spark://100.72.209.77:7077") \
         .getOrCreate()
 
     spark.sparkContext.setLogLevel("ERROR")
-    print("¡Sesión de Spark inicializada con éxito!")
+    print("¡Sesión de Spark inicializada con éxito vía Tailscale!")
 
     # Ruta fija unificada dentro del volumen compartido de Docker
     ruta_dataset = "/opt/spark/shared-data/dataset.json"
@@ -25,11 +25,20 @@ def iniciar_analisis_spark():
     print(f"Cargando registros desde: {ruta_dataset}")
     print("Cargando los 100,000 registros generados por Kafka en el DataFrame...")
     
+    # Cargamos el dataset generado
     df = spark.read.json(ruta_dataset)
     
-    print("\n--- ESQUEMA DE 10 CAMPOS DETECTADO POR EL CLÚSTER ---")
+    # EXIGENCIA DEL PROFESOR: Presentar claramente la estructura de los datos generados
+    print("\n--- ESQUEMA DE DATOS DETECTADO POR EL CLÚSTER ---")
     df.printSchema()
     print("-----------------------------------------------------")
+    
+    print("Ejemplo de registro (Primeros 3 elementos):")
+    df.show(3, truncate=False)
+
+    # 💡 HERRAMIENTA CLAVE PARA MODIFICACIÓN EN VIVO:
+    # Registramos el DataFrame como una tabla SQL virtual para responder consultas rápidas del profesor
+    df.createOrReplaceTempView("personas")
 
     # -----------------------------------------------------------------
     # CONSULTAS ANALÍTICAS EXIGIDAS EN LA RÚBRICA
@@ -37,8 +46,8 @@ def iniciar_analisis_spark():
     
     print("\n[Consulta 1] Calculando promedio de ingresos por Estado...")
     ingresos_por_estado = df.groupBy("estado") \
-        .agg(avg("ingreso_mensual").alias("promedio_ingreso")) \
-        .orderBy(desc("promedio_ingreso"))
+        .agg(avg("ingreso_mensual").alias("promedio_income")) \
+        .orderBy(desc("promedio_income"))
     ingresos_por_estado.show(10)
 
     print("\n[Consulta 2] Conteo de usuarios activos vs inactivos...")
@@ -53,9 +62,21 @@ def iniciar_analisis_spark():
         .orderBy(desc("ingreso_medio"))
     top_profesiones_ags.show(5)
 
+    # -----------------------------------------------------------------
+    # 🚀 ESPACIO DE MODIFICACIÓN EN VIVO (Para las peticiones del profesor)
+    # -----------------------------------------------------------------
+    print("\n=========================================================")
+    print("  ZONA DE CONSULTAS IMPROVISADAS (EXAMEN EN VIVO)       ")
     print("=========================================================")
-    print("Análisis finalizado en el Clúster Distribuido. Cerrando...")
+    
+    # Ejemplo de consulta SQL directa que pueden modificar al instante si el profesor la pide:
+    # query_profesor = "SELECT * FROM personas WHERE estado = 'Aguascalientes' AND edad < 25"
+    # spark.sql(query_profesor).show(10)
+    
+    print("Listo para modificar y ejecutar consultas adicionales en tiempo real.")
     print("=========================================================")
+
+    # Cerramos sesión de forma limpia
     spark.stop()
 
 if __name__ == "__main__":

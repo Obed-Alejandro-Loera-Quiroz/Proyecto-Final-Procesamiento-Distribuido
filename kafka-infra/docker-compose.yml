@@ -1,10 +1,12 @@
+version: '3.8'
+
 services:
   kafka-nodo:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka-cluster-nodo-${NODO_ID}
     env_file: .env
     restart: unless-stopped
-    network_mode: "host" # Crucial: Usa la red física del módem, no la red interna de Docker
+    network_mode: "host" # Crucial: Usa la red de tu Linux Mint para detectar Tailscale directamente
     environment:
       # Configuración del ID único del nodo usando el archivo .env
       KAFKA_NODE_ID: ${NODO_ID}
@@ -12,13 +14,13 @@ services:
       # Roles del nodo: actúan como controlador (KRaft) y broker (manejador de datos)
       KAFKA_PROCESS_ROLES: 'broker,controller'
       
-      # El mapa de los 3 votantes oficiales del clúster (las 3 IPs fijas de la red)
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@192.168.0.101:9093,2@192.168.0.102:9093,3@192.168.0.103:9093'
+      # El mapa de los 3 votantes oficiales del clúster usando el mapa dinámico del .env
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@${IP_NODO_1}:9093,2@${IP_NODO_2}:9093,3@100.72.209.77:9093'
       
       # Protocolos de conexión en la red
       KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
       
-      # Cómo se van a anunciar los nodos entre sí a través del módem TP-Link
+      # Cómo se va a anunciar tu nodo a los demás mediante tu nueva IP de Tailscale
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://${LAPTOP_IP}:9092'
       
       # Configuración interna para los listeners

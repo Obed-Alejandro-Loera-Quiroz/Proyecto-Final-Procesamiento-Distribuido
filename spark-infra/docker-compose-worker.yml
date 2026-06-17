@@ -1,19 +1,16 @@
+version: '3.8'
+
 services:
   spark-worker:
     image: apache/spark:3.5.1
     container_name: spark-worker-nodo
-    user: root  # Evita bloqueos de permisos en sus laptops
+    user: root  # Evita bloqueos de permisos de Linux en sus laptops
+    network_mode: "host" # Crucial: Permite que el contenedor de ellos use Tailscale para buscarte
     environment:
       - SPARK_MODE=worker
-    ports:
-      - "8081:8081"
+      - SPARK_WORKER_WEBUI_PORT=8081
     volumes:
       - ../shared-data:/opt/spark/shared-data
-    networks:
-      - spark-net
-    # CONEXIÓN DIRECTA EN TIEMPO REAL:
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://192.168.0.103:7077
-
-networks:
-  spark-net:
-    driver: bridge
+    restart: unless-stopped
+    # CONEXIÓN REMOTA EN TIEMPO REAL A TU IP DE TAILSCALE:
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://100.72.209.77:7077
