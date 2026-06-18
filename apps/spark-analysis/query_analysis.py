@@ -1,83 +1,121 @@
-import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, avg, count, desc
+from pyspark.sql.functions import col, from_json, avg, count, desc
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, BooleanType
 
-def iniciar_analisis_spark():
+
+BROKERS_KAFKA = "100.115.62.37:9092,100.123.126.75:9092,100.72.209.77:9092"
+
+TOPICOS = (
+    "datos-usuarios-zona1,"
+    "datos-usuarios-zona2,"
+    "datos-usuarios-zona3,"
+    "datos-usuarios-zona4,"
+    "datos-usuarios-zona5"
+)
+
+
+def iniciar_analisis_spark_kafka():
     print("=========================================================")
-    print("   Iniciando Motor Analítico Apache Spark (Fase 2)       ")
+    print("   ANALISIS EN VIVO CON APACHE SPARK Y KAFKA             ")
     print("=========================================================")
 
-    # Creamos la sesión apuntando a tu IP Fija de Tailscale (Tú eres el Master)
     spark = SparkSession.builder \
-        .appName("AnaliticaPoblacionUAA") \
+        .appName("AnalisisKafkaSparkEnVivo") \
         .master("spark://100.72.209.77:7077") \
         .getOrCreate()
 
     spark.sparkContext.setLogLevel("ERROR")
-    print("¡Sesión de Spark inicializada con éxito vía Tailscale!")
 
-    # Ruta fija unificada dentro del volumen compartido de Docker
-    ruta_dataset = "/opt/spark/shared-data/dataset.json"
-    
-    if not os.path.exists(ruta_dataset):
-        ruta_dataset = "dataset.json"
+    print("Sesion de Spark iniciada correctamente.")
+    print("Master Spark: spark://100.72.209.77:7077")
+    print(f"Brokers Kafka: {BROKERS_KAFKA}")
+    print(f"Topicos Kafka: {TOPICOS}")
 
-    print(f"Cargando registros desde: {ruta_dataset}")
-    print("Cargando los 100,000 registros generados por Kafka en el DataFrame...")
-    
-    # Cargamos el dataset generado
-    df = spark.read.json(ruta_dataset)
-    
-    # EXIGENCIA DEL PROFESOR: Presentar claramente la estructura de los datos generados
-    print("\n--- ESQUEMA DE DATOS DETECTADO POR EL CLÚSTER ---")
-    df.printSchema()
-    print("-----------------------------------------------------")
-    
-    print("Ejemplo de registro (Primeros 3 elementos):")
-    df.show(3, truncate=False)
+    esquema = StructType([
+        StructField("id_persona", IntegerType(), True),
+        StructField("demo_id", StringType(), True),
+        StructField("topic_destino", StringType(), True),
+        StructField("zona", StringType(), True),
+        StructField("nombre", StringType(), True),
+        StructField("apellido", StringType(), True),
+        StructField("edad", IntegerType(), True),
+        StructField("genero", StringType(), True),
+        StructField("ciudad", StringType(), True),
+        StructField("estado", StringType(), True),
+        StructField("ocupacion", StringType(), True),
+        StructField("nivel_estudios", StringType(), True),
+        StructField("ingreso_mensual", DoubleType(), True),
+        StructField("antiguedad_anos", IntegerType(), True),
+        StructField("activo", BooleanType(), True),
+        StructField("fecha_registro", StringType(), True),
+    ])
 
-    # 💡 HERRAMIENTA CLAVE PARA MODIFICACIÓN EN VIVO:
-    # Registramos el DataFrame como una tabla SQL virtual para responder consultas rápidas del profesor
-    df.createOrReplaceTempView("personas")
+    print("\nConectando Spark directamente a Kafka...")
 
-    # -----------------------------------------------------------------
-    # CONSULTAS ANALÍTICAS EXIGIDAS EN LA RÚBRICA
-    # -----------------------------------------------------------------
-    
-    print("\n[Consulta 1] Calculando promedio de ingresos por Estado...")
-    ingresos_por_estado = df.groupBy("estado") \
-        .agg(avg("ingreso_mensual").alias("promedio_income")) \
-        .orderBy(desc("promedio_income"))
-    ingresos_por_estado.show(10)
+    kafka_df = spark.readStream \
+        .format("kafka") \
+        .option("kafka.bootstrap.servers", BROKERS_KAFKA) \
+        .option("subscribe", TOPICOS) \
+        .option("startingOffsets", "latest") \
+        .option("failOnDataLoss", "false") \
+        .load()
 
-    print("\n[Consulta 2] Conteo de usuarios activos vs inactivos...")
-    usuarios_estatus = df.groupBy("activo") \
-        .agg(count("id_persona").alias("total_usuarios"))
-    usuarios_estatus.show()
+    datos = kafka_df.select(
+        col("topic"),
+        col("partition"),
+        col("offset"),
+        from_json(col("value").cast("string"), esquema).alias("data")
+    ).select(
+        "topic",
+        "partition",
+        "offset",
+        "data.*"
+    )
 
-    print("\n[Consulta 3] Las 5 profesiones más lucrativas en Aguascalientes...")
-    top_profesiones_ags = df.filter(col("estado") == "Aguascalientes") \
-        .groupBy("ocupacion") \
-        .agg(avg("ingreso_mensual").alias("ingreso_medio"), count("id_persona").alias("total_personas")) \
-        .orderBy(desc("ingreso_medio"))
-    top_profesiones_ags.show(5)
-
-    # -----------------------------------------------------------------
-    # 🚀 ESPACIO DE MODIFICACIÓN EN VIVO (Para las peticiones del profesor)
-    # -----------------------------------------------------------------
     print("\n=========================================================")
-    print("  ZONA DE CONSULTAS IMPROVISADAS (EXAMEN EN VIVO)       ")
-    print("=========================================================")
-    
-    # Ejemplo de consulta SQL directa que pueden modificar al instante si el profesor la pide:
-    # query_profesor = "SELECT * FROM personas WHERE estado = 'Aguascalientes' AND edad < 25"
-    # spark.sql(query_profesor).show(10)
-    
-    print("Listo para modificar y ejecutar consultas adicionales en tiempo real.")
+    print("CONSULTA EN VIVO 1: TOTAL DE REGISTROS POR ZONA")
     print("=========================================================")
 
-    # Cerramos sesión de forma limpia
-    spark.stop()
+    conteo_por_zona = datos.groupBy("zona", "topic_destino") \
+        .agg(count("id_persona").alias("total_registros")) \
+        .orderBy("zona")
+
+    query_zona = conteo_por_zona.writeStream \
+        .outputMode("complete") \
+        .format("console") \
+        .option("truncate", "false") \
+        .option("numRows", "20") \
+        .queryName("conteo_por_zona") \
+        .start()
+
+    print("\n=========================================================")
+    print("CONSULTA EN VIVO 2: PROMEDIO DE INGRESOS POR ESTADO")
+    print("=========================================================")
+
+    ingresos_estado = datos.groupBy("estado") \
+        .agg(
+            avg("ingreso_mensual").alias("promedio_ingreso"),
+            count("id_persona").alias("total_personas")
+        ) \
+        .orderBy(desc("promedio_ingreso"))
+
+    query_estado = ingresos_estado.writeStream \
+        .outputMode("complete") \
+        .format("console") \
+        .option("truncate", "false") \
+        .option("numRows", "10") \
+        .queryName("ingresos_por_estado") \
+        .start()
+
+    print("\n=========================================================")
+    print("SPARK ESTA ESCUCHANDO KAFKA EN TIEMPO REAL")
+    print("Ahora ejecuta el producer para enviar datos.")
+    print("Para detener Spark usa CTRL + C.")
+    print("=========================================================")
+
+    query_zona.awaitTermination()
+    query_estado.awaitTermination()
+
 
 if __name__ == "__main__":
-    iniciar_analisis_spark()
+    iniciar_analisis_spark_kafka()
