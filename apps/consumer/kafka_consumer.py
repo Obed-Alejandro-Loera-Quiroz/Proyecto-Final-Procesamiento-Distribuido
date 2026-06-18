@@ -11,8 +11,6 @@ BROKERS_CLUSTER = [
     "100.72.209.77:9092"  # Obed - Nodo 3 como broker inicial
 ]
 
-# Particiones donde el producer manda los datos.
-# Las dejamos fijas porque ya probaron que estas particiones funcionan bien.
 PARTICIONES_LECTURA = [
     TopicPartition("datos-usuarios-zona1", 2),
     TopicPartition("datos-usuarios-zona2", 1),
@@ -20,7 +18,6 @@ PARTICIONES_LECTURA = [
 ]
 
 DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
-MODO_LECTURA = os.environ.get("MODO_LECTURA", "nuevo").lower()
 
 
 def obtener_nombre_consumidor():
@@ -31,7 +28,6 @@ def obtener_nombre_consumidor():
 
 
 NOMBRE_CONSUMIDOR = obtener_nombre_consumidor()
-GROUP_ID = f"grupo-demo-{DEMO_ID}-{NOMBRE_CONSUMIDOR}"
 
 
 CAMPOS = [
@@ -73,7 +69,7 @@ def clave_offset(tp):
     return f"{tp.topic}-{tp.partition}"
 
 
-def cargar_offsets_locales(ruta_offsets):
+def cargar_offsets(ruta_offsets):
     if not os.path.exists(ruta_offsets):
         return {}
 
@@ -84,7 +80,7 @@ def cargar_offsets_locales(ruta_offsets):
         return {}
 
 
-def guardar_offsets_locales(ruta_offsets, offsets):
+def guardar_offsets(ruta_offsets, offsets):
     with open(ruta_offsets, "w", encoding="utf-8") as archivo:
         json.dump(offsets, archivo, indent=4)
 
@@ -126,13 +122,13 @@ def crear_consumer():
 
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
 
-        # Kafka recordara el avance por este grupo.
-        group_id=GROUP_ID,
+        # No usamos group_id porque estaba dando timeout en Tailscale.
+        # La reconexion se maneja con archivo local de offsets.
+        group_id=None,
 
-        # Si el grupo es nuevo, no lee basura vieja.
+        # Si es la primera vez, espera mensajes nuevos.
         auto_offset_reset="latest",
 
-        # Commit manual despues de guardar archivos.
         enable_auto_commit=False,
 
         request_timeout_ms=120000,
@@ -140,69 +136,7 @@ def crear_consumer():
     )
 
 
-def configurar_offsets(consumer, ruta_offsets):
-    offsets_locales = cargar_offsets_locales(ruta_offsets)
-
-    beginning_offsets = consumer.beginning_offsets(PARTICIONES_LECTURA)
-    end_offsets = consumer.end_offsets(PARTICIONES_LECTURA)
-
-    print("\nParticiones asignadas:")
-    for tp in PARTICIONES_LECTURA:
-        print(f"-> {tp.topic} | particion {tp.partition}")
-
-    print("\nOffsets actuales en Kafka:")
-    for tp in PARTICIONES_LECTURA:
-        print(
-            f"-> {tp.topic} particion {tp.partition} | "
-            f"inicio: {beginning_offsets[tp]} | fin: {end_offsets[tp]}"
-        )
-
-    print("\nPunto de lectura:")
-
-    for tp in PARTICIONES_LECTURA:
-        key = clave_offset(tp)
-        offset = None
-        origen = None
-
-        try:
-            offset_kafka = consumer.committed(tp)
-
-            if offset_kafka is not None:
-                offset = int(offset_kafka)
-                origen = "offset guardado en Kafka"
-
-        except Exception:
-            offset = None
-
-        if offset is None and key in offsets_locales:
-            offset = int(offsets_locales[key])
-            origen = "offset local de respaldo"
-
-        if offset is None:
-            if MODO_LECTURA == "historico":
-                offset = beginning_offsets[tp]
-                origen = "inicio del topic"
-            else:
-                offset = end_offsets[tp]
-                origen = "mensajes nuevos"
-
-        if offset < beginning_offsets[tp]:
-            offset = beginning_offsets[tp]
-
-        if offset > end_offsets[tp]:
-            offset = end_offsets[tp]
-
-        consumer.seek(tp, offset)
-        offsets_locales[key] = offset
-
-        print(f"-> {key}: {origen}, offset {offset}")
-
-    guardar_offsets_locales(ruta_offsets, offsets_locales)
-
-    return offsets_locales
-
-
-def guardar_registro_sql(f_sql, registro):
+def guardar_sql(f_sql, registro):
     activo_sql = 1 if registro["activo"] else 0
 
     linea_sql = (
@@ -238,24 +172,32 @@ def iniciar_consumidor():
     print("=========================================================")
     print(f"Consumidor: {NOMBRE_CONSUMIDOR}")
     print(f"Demo ID: {DEMO_ID}")
-    print(f"Group ID: {GROUP_ID}")
-    print(f"Modo lectura: {MODO_LECTURA}")
+    print("Modo: reconexion con offsets locales")
     print("Conectando con Kafka por Tailscale en puerto 9092...")
 
     ruta_json, ruta_csv, ruta_sql, ruta_offsets = obtener_rutas_archivos()
+    offsets = cargar_offsets(ruta_offsets)
 
     try:
         consumer = crear_consumer()
         consumer.assign(PARTICIONES_LECTURA)
 
-        offsets_actuales = configurar_offsets(consumer, ruta_offsets)
+        print("\nParticiones asignadas:")
+        for tp in PARTICIONES_LECTURA:
+            key = clave_offset(tp)
+
+            if key in offsets:
+                consumer.seek(tp, int(offsets[key]))
+                print(f"-> {tp.topic} | particion {tp.partition} | retomando desde offset {offsets[key]}")
+            else:
+                print(f"-> {tp.topic} | particion {tp.partition} | esperando mensajes nuevos")
 
         print("\nConexion establecida con exito.")
-        print("Si este consumidor se desconecta, al volver usa el mismo DEMO_ID y el mismo nombre.")
+        print("Si se desconecta, al volver usara el archivo de offsets.")
+        print(f"Archivo de offsets: {ruta_offsets}")
         print(f"Guardando JSON en: {ruta_json}")
         print(f"Guardando CSV en:  {ruta_csv}")
         print(f"Guardando SQL en:  {ruta_sql}")
-        print(f"Archivo de offsets: {ruta_offsets}")
         print("\nEsperando mensajes...\n")
 
     except Exception as e:
@@ -305,14 +247,7 @@ CREATE TABLE IF NOT EXISTS personas_demo (
 """)
 
             while True:
-                try:
-                    mensajes = consumer.poll(timeout_ms=3000, max_records=500)
-
-                except Exception as e:
-                    print(f"Error temporal al consultar Kafka: {e}")
-                    print("Reintentando en 3 segundos...")
-                    time.sleep(3)
-                    continue
+                mensajes = consumer.poll(timeout_ms=3000, max_records=500)
 
                 if not mensajes:
                     print("Sin mensajes nuevos por ahora, esperando...")
@@ -325,29 +260,22 @@ CREATE TABLE IF NOT EXISTS personas_demo (
 
                         f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
                         escritor_csv.writerow(registro)
-                        guardar_registro_sql(f_sql, registro)
+                        guardar_sql(f_sql, registro)
 
-                        offsets_actuales[clave_offset(tp)] = mensaje.offset + 1
+                        offsets[clave_offset(tp)] = mensaje.offset + 1
 
                         if total_recibidos % 50 == 0:
                             f_json.flush()
                             f_csv.flush()
                             f_sql.flush()
-                            guardar_offsets_locales(ruta_offsets, offsets_actuales)
-
-                            try:
-                                consumer.commit()
-                                estado_commit = "commit Kafka OK"
-                            except Exception:
-                                estado_commit = "commit Kafka fallo, offset local guardado"
+                            guardar_offsets(ruta_offsets, offsets)
 
                             print(
                                 f"{NOMBRE_CONSUMIDOR} recibio {total_recibidos} mensajes en esta sesion | "
                                 f"Topic: {mensaje.topic} | "
                                 f"Particion: {mensaje.partition} | "
                                 f"Offset: {mensaje.offset} | "
-                                f"Registro: {registro['id_persona']} | "
-                                f"{estado_commit}"
+                                f"Registro: {registro['id_persona']}"
                             )
 
     except KeyboardInterrupt:
@@ -355,12 +283,10 @@ CREATE TABLE IF NOT EXISTS personas_demo (
         print("Guardando offsets antes de cerrar...")
 
         try:
-            guardar_offsets_locales(ruta_offsets, offsets_actuales)
-            consumer.commit()
+            guardar_offsets(ruta_offsets, offsets)
             print("Offsets guardados correctamente.")
-        except Exception:
-            guardar_offsets_locales(ruta_offsets, offsets_actuales)
-            print("Offset local guardado. Kafka no confirmo commit, pero se puede continuar.")
+        except Exception as e:
+            print(f"No se pudieron guardar offsets: {e}")
 
     except Exception as e:
         print(f"\nError durante el consumo de datos: {e}")
