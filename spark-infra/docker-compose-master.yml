@@ -10,6 +10,7 @@ services:
 
     volumes:
       - ../shared-data:/opt/spark/shared-data
+      - ../apps/spark-analysis:/opt/spark/apps
 
     command: >
       /opt/spark/bin/spark-class
