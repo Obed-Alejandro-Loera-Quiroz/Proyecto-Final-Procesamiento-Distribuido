@@ -1,17 +1,19 @@
-version: '3.8'
+version: "3.8"
 
 services:
   spark-master:
     image: apache/spark:3.5.1
     container_name: spark-master-nodo-3
-    user: root  # Forzamos permisos de superusuario dentro de Docker
-    network_mode: "host" # Crucial para que escuche tu IP de Tailscale (100.65.178.71)
-    environment:
-      - SPARK_MODE=master
-      - SPARK_MASTER_PORT=7077
-      - SPARK_MASTER_WEBUI_PORT=8080
+    user: root
+    network_mode: "host"
+    restart: unless-stopped
+
     volumes:
       - ../shared-data:/opt/spark/shared-data
-    restart: unless-stopped
-    # Forzamos a Spark a levantar explícitamente en tu IP de Tailscale:
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --host 100.72.209.77
+
+    command: >
+      /opt/spark/bin/spark-class
+      org.apache.spark.deploy.master.Master
+      --host 100.72.209.77
+      --port 7077
+      --webui-port 8080
