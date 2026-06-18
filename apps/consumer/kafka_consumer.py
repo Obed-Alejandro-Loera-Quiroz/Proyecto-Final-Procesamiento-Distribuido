@@ -2,19 +2,22 @@ import csv
 import json
 import os
 import sys
-import time
 import getpass
 from kafka import KafkaConsumer, TopicPartition
 
 
 BROKERS_CLUSTER = [
-    "100.72.209.77:9092"  # Obed - Nodo 3 como broker inicial
+    "100.123.126.75:9092"  # Pamila - Nodo 2
 ]
 
+# Particiones actuales con Leader 2:
+# zona1 -> particion 1
+# zona2 -> particion 0
+# zona3 -> particion 1
 PARTICIONES_LECTURA = [
-    TopicPartition("datos-usuarios-zona1", 2),
-    TopicPartition("datos-usuarios-zona2", 1),
-    TopicPartition("datos-usuarios-zona3", 2)
+    TopicPartition("datos-usuarios-zona1", 1),
+    TopicPartition("datos-usuarios-zona2", 0),
+    TopicPartition("datos-usuarios-zona3", 1)
 ]
 
 DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
@@ -122,13 +125,11 @@ def crear_consumer():
 
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
 
-        # No usamos group_id porque estaba dando timeout en Tailscale.
-        # La reconexion se maneja con archivo local de offsets.
+        # No usamos group_id porque estaba dando timeout en el cluster por Tailscale.
+        # La reconexion se controla con archivo local de offsets.
         group_id=None,
 
-        # Si es la primera vez, espera mensajes nuevos.
         auto_offset_reset="latest",
-
         enable_auto_commit=False,
 
         request_timeout_ms=120000,
@@ -173,6 +174,7 @@ def iniciar_consumidor():
     print(f"Consumidor: {NOMBRE_CONSUMIDOR}")
     print(f"Demo ID: {DEMO_ID}")
     print("Modo: reconexion con offsets locales")
+    print("Broker inicial: Pamila - Nodo 2")
     print("Conectando con Kafka por Tailscale en puerto 9092...")
 
     ruta_json, ruta_csv, ruta_sql, ruta_offsets = obtener_rutas_archivos()

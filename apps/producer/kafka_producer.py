@@ -8,33 +8,35 @@ from faker import Faker
 
 
 BROKERS_CLUSTER = [
-    "100.72.209.77:9092"  # Obed - Nodo 3 como broker inicial
+    "100.123.126.75:9092"  # Pamila - Nodo 2
 ]
 
-# Particiones que ya probaron que funcionan bien.
+# Particiones actuales con Leader 2:
+# zona1 -> particion 1
+# zona2 -> particion 0
+# zona3 -> particion 1
 TOPICOS_DESTINO = [
     {
         "topic": "datos-usuarios-zona1",
-        "partition": 2,
+        "partition": 1,
         "zona": "zona1"
     },
     {
         "topic": "datos-usuarios-zona2",
-        "partition": 1,
+        "partition": 0,
         "zona": "zona2"
     },
     {
         "topic": "datos-usuarios-zona3",
-        "partition": 2,
+        "partition": 1,
         "zona": "zona3"
     }
 ]
 
 DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
-
 TOTAL_REGISTROS = int(os.environ.get("TOTAL_REGISTROS", "100000"))
 
-# Lo dejamos un poco lento para que el profe pueda ver la desconexion.
+# Pausa para que se pueda ver la desconexion/reconexion en clase.
 PAUSA_CADA = int(os.environ.get("PAUSA_CADA", "100"))
 SEGUNDOS_PAUSA = float(os.environ.get("SEGUNDOS_PAUSA", "0.10"))
 
@@ -142,6 +144,7 @@ def iniciar_productor():
     print("=========================================================")
     print(f"Demo ID: {DEMO_ID}")
     print(f"Total de registros: {TOTAL_REGISTROS}")
+    print("Broker inicial: Pamila - Nodo 2")
     print("Conectando con Kafka por Tailscale en puerto 9092...")
 
     fake = Faker("es_MX")
