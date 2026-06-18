@@ -3,21 +3,21 @@ import json
 import os
 import sys
 import getpass
-from kafka import KafkaConsumer, TopicPartition
+from kafka import KafkaConsumer
 
 
 BROKERS_CLUSTER = [
-    "100.123.126.75:9092"  # Pamila - Nodo 2
+    "100.115.62.37:9092",  # Osvaldo - Nodo 1
+    "100.123.126.75:9092", # Pamila - Nodo 2
+    "100.72.209.77:9092"   # Obed - Nodo 3
 ]
 
-# Particiones actuales con Leader 2:
-# zona1 -> particion 1
-# zona2 -> particion 0
-# zona3 -> particion 1
-PARTICIONES_LECTURA = [
-    TopicPartition("datos-usuarios-zona1", 1),
-    TopicPartition("datos-usuarios-zona2", 0),
-    TopicPartition("datos-usuarios-zona3", 1)
+TOPICOS = [
+    "datos-usuarios-zona1",
+    "datos-usuarios-zona2",
+    "datos-usuarios-zona3",
+    "datos-usuarios-zona4",
+    "datos-usuarios-zona5"
 ]
 
 DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
@@ -31,6 +31,11 @@ def obtener_nombre_consumidor():
 
 
 NOMBRE_CONSUMIDOR = obtener_nombre_consumidor()
+
+# Cada laptop tiene su propio grupo.
+# Así Obed, Pamila y Osvaldo reciben todos los datos.
+# Si uno se desconecta y vuelve con el mismo DEMO_ID y nombre, Kafka continúa desde donde iba.
+GROUP_ID = f"grupo-{DEMO_ID}-{NOMBRE_CONSUMIDOR}"
 
 
 CAMPOS = [
@@ -60,32 +65,22 @@ def obtener_rutas_archivos():
 
     os.makedirs(ruta_base, exist_ok=True)
 
-    ruta_json = os.path.join(ruta_base, f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.json")
-    ruta_csv = os.path.join(ruta_base, f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.csv")
-    ruta_sql = os.path.join(ruta_base, f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.sql")
-    ruta_offsets = os.path.join(ruta_base, f"offsets_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.json")
+    ruta_json = os.path.join(
+        ruta_base,
+        f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.json"
+    )
 
-    return ruta_json, ruta_csv, ruta_sql, ruta_offsets
+    ruta_csv = os.path.join(
+        ruta_base,
+        f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.csv"
+    )
 
+    ruta_sql = os.path.join(
+        ruta_base,
+        f"dataset_demo_{DEMO_ID}_{NOMBRE_CONSUMIDOR}.sql"
+    )
 
-def clave_offset(tp):
-    return f"{tp.topic}-{tp.partition}"
-
-
-def cargar_offsets(ruta_offsets):
-    if not os.path.exists(ruta_offsets):
-        return {}
-
-    try:
-        with open(ruta_offsets, "r", encoding="utf-8") as archivo:
-            return json.load(archivo)
-    except Exception:
-        return {}
-
-
-def guardar_offsets(ruta_offsets, offsets):
-    with open(ruta_offsets, "w", encoding="utf-8") as archivo:
-        json.dump(offsets, archivo, indent=4)
+    return ruta_json, ruta_csv, ruta_sql
 
 
 def limpiar_sql(valor):
@@ -119,22 +114,57 @@ def normalizar_registro(registro, topic):
 
 def crear_consumer():
     return KafkaConsumer(
+        *TOPICOS,
+
         bootstrap_servers=BROKERS_CLUSTER,
         security_protocol="PLAINTEXT",
         api_version=(3, 5, 0),
 
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
 
-        # No usamos group_id porque estaba dando timeout en el cluster por Tailscale.
-        # La reconexion se controla con archivo local de offsets.
-        group_id=None,
+        group_id=GROUP_ID,
 
+        # Si el grupo es nuevo, espera mensajes nuevos.
+        # Si el grupo ya existe, Kafka continúa desde el último offset confirmado.
         auto_offset_reset="latest",
+
+        # Confirmamos manualmente después de guardar en archivos.
         enable_auto_commit=False,
 
         request_timeout_ms=120000,
+        session_timeout_ms=45000,
+        heartbeat_interval_ms=15000,
         max_poll_records=500
     )
+
+
+def escribir_encabezado_sql(f_sql):
+    f_sql.write("-- =========================================================\n")
+    f_sql.write("-- DATASET DEMO GENERADO POR APACHE KAFKA\n")
+    f_sql.write("-- PROYECTO FINAL DE PROCESAMIENTO DISTRIBUIDO\n")
+    f_sql.write("-- =========================================================\n\n")
+
+    f_sql.write("""
+CREATE TABLE IF NOT EXISTS personas_demo (
+    id_persona INT,
+    demo_id VARCHAR(100),
+    topic_destino VARCHAR(100),
+    zona VARCHAR(100),
+    nombre VARCHAR(100),
+    apellido VARCHAR(100),
+    edad INT,
+    genero VARCHAR(10),
+    ciudad VARCHAR(100),
+    estado VARCHAR(100),
+    ocupacion VARCHAR(100),
+    nivel_estudios VARCHAR(100),
+    ingreso_mensual DECIMAL(10,2),
+    antiguedad_anos INT,
+    activo BOOLEAN,
+    fecha_registro VARCHAR(30)
+);
+
+""")
 
 
 def guardar_sql(f_sql, registro):
@@ -173,30 +203,25 @@ def iniciar_consumidor():
     print("=========================================================")
     print(f"Consumidor: {NOMBRE_CONSUMIDOR}")
     print(f"Demo ID: {DEMO_ID}")
-    print("Modo: reconexion con offsets locales")
-    print("Broker inicial: Pamila - Nodo 2")
-    print("Conectando con Kafka por Tailscale en puerto 9092...")
+    print(f"Group ID: {GROUP_ID}")
+    print("Brokers iniciales:")
+    for broker in BROKERS_CLUSTER:
+        print(f"-> {broker}")
 
-    ruta_json, ruta_csv, ruta_sql, ruta_offsets = obtener_rutas_archivos()
-    offsets = cargar_offsets(ruta_offsets)
+    print("\nTopicos:")
+    for topico in TOPICOS:
+        print(f"-> {topico}")
+
+    print("\nConectando con Kafka por Tailscale...")
+
+    ruta_json, ruta_csv, ruta_sql = obtener_rutas_archivos()
 
     try:
         consumer = crear_consumer()
-        consumer.assign(PARTICIONES_LECTURA)
-
-        print("\nParticiones asignadas:")
-        for tp in PARTICIONES_LECTURA:
-            key = clave_offset(tp)
-
-            if key in offsets:
-                consumer.seek(tp, int(offsets[key]))
-                print(f"-> {tp.topic} | particion {tp.partition} | retomando desde offset {offsets[key]}")
-            else:
-                print(f"-> {tp.topic} | particion {tp.partition} | esperando mensajes nuevos")
 
         print("\nConexion establecida con exito.")
-        print("Si se desconecta, al volver usara el archivo de offsets.")
-        print(f"Archivo de offsets: {ruta_offsets}")
+        print("Si este consumidor se desconecta, Kafka conserva los mensajes pendientes.")
+        print("Al reconectarse con el mismo DEMO_ID y nombre, continua desde donde iba.")
         print(f"Guardando JSON en: {ruta_json}")
         print(f"Guardando CSV en:  {ruta_csv}")
         print(f"Guardando SQL en:  {ruta_sql}")
@@ -222,73 +247,45 @@ def iniciar_consumidor():
                 escritor_csv.writeheader()
 
             if escribir_header_sql:
-                f_sql.write("-- =========================================================\n")
-                f_sql.write("-- DATASET DEMO GENERADO POR APACHE KAFKA\n")
-                f_sql.write("-- PROYECTO FINAL DE PROCESAMIENTO DISTRIBUIDO\n")
-                f_sql.write("-- =========================================================\n\n")
-                f_sql.write("""
-CREATE TABLE IF NOT EXISTS personas_demo (
-    id_persona INT,
-    demo_id VARCHAR(100),
-    topic_destino VARCHAR(100),
-    zona VARCHAR(100),
-    nombre VARCHAR(100),
-    apellido VARCHAR(100),
-    edad INT,
-    genero VARCHAR(10),
-    ciudad VARCHAR(100),
-    estado VARCHAR(100),
-    ocupacion VARCHAR(100),
-    nivel_estudios VARCHAR(100),
-    ingreso_mensual DECIMAL(10,2),
-    antiguedad_anos INT,
-    activo BOOLEAN,
-    fecha_registro VARCHAR(30)
-);
+                escribir_encabezado_sql(f_sql)
 
-""")
+            for mensaje in consumer:
+                registro = normalizar_registro(mensaje.value, mensaje.topic)
+                total_recibidos += 1
 
-            while True:
-                mensajes = consumer.poll(timeout_ms=3000, max_records=500)
+                f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                escritor_csv.writerow(registro)
+                guardar_sql(f_sql, registro)
 
-                if not mensajes:
-                    print("Sin mensajes nuevos por ahora, esperando...")
-                    continue
+                if total_recibidos % 50 == 0:
+                    f_json.flush()
+                    f_csv.flush()
+                    f_sql.flush()
 
-                for tp, lista_mensajes in mensajes.items():
-                    for mensaje in lista_mensajes:
-                        registro = normalizar_registro(mensaje.value, mensaje.topic)
-                        total_recibidos += 1
+                    try:
+                        consumer.commit()
+                        estado_commit = "offset guardado"
+                    except Exception as e:
+                        estado_commit = f"no se pudo guardar offset: {e}"
 
-                        f_json.write(json.dumps(registro, ensure_ascii=False) + "\n")
-                        escritor_csv.writerow(registro)
-                        guardar_sql(f_sql, registro)
-
-                        offsets[clave_offset(tp)] = mensaje.offset + 1
-
-                        if total_recibidos % 50 == 0:
-                            f_json.flush()
-                            f_csv.flush()
-                            f_sql.flush()
-                            guardar_offsets(ruta_offsets, offsets)
-
-                            print(
-                                f"{NOMBRE_CONSUMIDOR} recibio {total_recibidos} mensajes en esta sesion | "
-                                f"Topic: {mensaje.topic} | "
-                                f"Particion: {mensaje.partition} | "
-                                f"Offset: {mensaje.offset} | "
-                                f"Registro: {registro['id_persona']}"
-                            )
+                    print(
+                        f"{NOMBRE_CONSUMIDOR} recibio {total_recibidos} mensajes en esta sesion | "
+                        f"Topic: {mensaje.topic} | "
+                        f"Particion: {mensaje.partition} | "
+                        f"Offset: {mensaje.offset} | "
+                        f"Registro: {registro['id_persona']} | "
+                        f"{estado_commit}"
+                    )
 
     except KeyboardInterrupt:
         print("\nConsumidor detenido manualmente.")
-        print("Guardando offsets antes de cerrar...")
+        print("Guardando ultimo offset antes de cerrar...")
 
         try:
-            guardar_offsets(ruta_offsets, offsets)
-            print("Offsets guardados correctamente.")
+            consumer.commit()
+            print("Offset guardado correctamente.")
         except Exception as e:
-            print(f"No se pudieron guardar offsets: {e}")
+            print(f"No se pudo guardar el offset final: {e}")
 
     except Exception as e:
         print(f"\nError durante el consumo de datos: {e}")

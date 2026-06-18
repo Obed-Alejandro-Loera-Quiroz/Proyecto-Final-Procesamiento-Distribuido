@@ -8,45 +8,39 @@ from faker import Faker
 
 
 BROKERS_CLUSTER = [
-    "100.123.126.75:9092"  # Pamila - Nodo 2
+    "100.115.62.37:9092",  # Osvaldo - Nodo 1
+    "100.123.126.75:9092", # Pamila - Nodo 2
+    "100.72.209.77:9092"   # Obed - Nodo 3
 ]
 
-# Particiones actuales con Leader 2:
-# zona1 -> particion 1
-# zona2 -> particion 0
-# zona3 -> particion 1
-TOPICOS_DESTINO = [
-    {
-        "topic": "datos-usuarios-zona1",
-        "partition": 1,
-        "zona": "zona1"
-    },
-    {
-        "topic": "datos-usuarios-zona2",
-        "partition": 0,
-        "zona": "zona2"
-    },
-    {
-        "topic": "datos-usuarios-zona3",
-        "partition": 1,
-        "zona": "zona3"
-    }
+TOPICOS = [
+    "datos-usuarios-zona1",
+    "datos-usuarios-zona2",
+    "datos-usuarios-zona3",
+    "datos-usuarios-zona4",
+    "datos-usuarios-zona5"
 ]
 
 DEMO_ID = os.environ.get("DEMO_ID", "presentacion_1")
 TOTAL_REGISTROS = int(os.environ.get("TOTAL_REGISTROS", "100000"))
 
-# Pausa para que se pueda ver la desconexion/reconexion en clase.
+# Pausa para que se pueda ver la desconexion/reconexion en la demo.
 PAUSA_CADA = int(os.environ.get("PAUSA_CADA", "100"))
-SEGUNDOS_PAUSA = float(os.environ.get("SEGUNDOS_PAUSA", "0.10"))
+SEGUNDOS_PAUSA = float(os.environ.get("SEGUNDOS_PAUSA", "0.05"))
 
 errores_envio = 0
 
 conteo_por_topico = {
     "datos-usuarios-zona1": 0,
     "datos-usuarios-zona2": 0,
-    "datos-usuarios-zona3": 0
+    "datos-usuarios-zona3": 0,
+    "datos-usuarios-zona4": 0,
+    "datos-usuarios-zona5": 0
 }
+
+
+def al_recibir_meta(metadata):
+    pass
 
 
 def al_error_envio(error):
@@ -56,11 +50,26 @@ def al_error_envio(error):
     print(f"\nError al enviar mensaje a Kafka: {error}")
 
 
-def seleccionar_destino(conteo):
-    return TOPICOS_DESTINO[conteo % len(TOPICOS_DESTINO)]
+def seleccionar_topico(conteo):
+    return TOPICOS[conteo % len(TOPICOS)]
 
 
-def crear_registro(fake, id_persona, destino):
+def obtener_zona(topico):
+    if topico == "datos-usuarios-zona1":
+        return "zona1"
+    elif topico == "datos-usuarios-zona2":
+        return "zona2"
+    elif topico == "datos-usuarios-zona3":
+        return "zona3"
+    elif topico == "datos-usuarios-zona4":
+        return "zona4"
+    elif topico == "datos-usuarios-zona5":
+        return "zona5"
+    else:
+        return "zona-desconocida"
+
+
+def crear_registro(fake, id_persona, topico):
     estados = [
         "Aguascalientes",
         "Jalisco",
@@ -82,14 +91,17 @@ def crear_registro(fake, id_persona, destino):
         "Contador",
         "Abogado",
         "Disenador",
-        "Docente"
+        "Docente",
+        "Analista de datos",
+        "Tecnico de soporte"
     ]
 
     estudios = [
         "Bachillerato",
         "Licenciatura",
         "Maestria",
-        "Doctorado"
+        "Doctorado",
+        "Tecnico superior"
     ]
 
     genero = random.choice(["M", "F"])
@@ -97,8 +109,8 @@ def crear_registro(fake, id_persona, destino):
     return {
         "id_persona": id_persona,
         "demo_id": DEMO_ID,
-        "topic_destino": destino["topic"],
-        "zona": destino["zona"],
+        "topic_destino": topico,
+        "zona": obtener_zona(topico),
         "nombre": fake.first_name_female() if genero == "F" else fake.first_name_male(),
         "apellido": fake.last_name(),
         "edad": random.randint(18, 65),
@@ -121,13 +133,17 @@ def crear_productor():
         api_version=(3, 5, 0),
 
         value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
+        key_serializer=lambda k: str(k).encode("utf-8"),
 
+        # acks=1 es estable para la demo.
+        # Kafka confirma cuando el lider de la particion recibe el mensaje.
         acks=1,
-        retries=3,
+
+        retries=5,
         retry_backoff_ms=1000,
 
         request_timeout_ms=60000,
-        delivery_timeout_ms=90000,
+        delivery_timeout_ms=120000,
         max_block_ms=60000,
 
         batch_size=8192,
@@ -144,8 +160,16 @@ def iniciar_productor():
     print("=========================================================")
     print(f"Demo ID: {DEMO_ID}")
     print(f"Total de registros: {TOTAL_REGISTROS}")
-    print("Broker inicial: Pamila - Nodo 2")
-    print("Conectando con Kafka por Tailscale en puerto 9092...")
+
+    print("\nBrokers iniciales:")
+    for broker in BROKERS_CLUSTER:
+        print(f"-> {broker}")
+
+    print("\nTopicos destino:")
+    for topico in TOPICOS:
+        print(f"-> {topico}")
+
+    print("\nConectando con Kafka por Tailscale...")
 
     fake = Faker("es_MX")
     producer = None
@@ -154,22 +178,24 @@ def iniciar_productor():
     try:
         producer = crear_productor()
 
-        print("Conexion exitosa con el cluster de Kafka.")
+        print("\nConexion exitosa con el cluster de Kafka.")
         print("Enviando mensajes...\n")
 
         for conteo in range(TOTAL_REGISTROS):
             id_persona = conteo + 1
-            destino = seleccionar_destino(conteo)
-            registro = crear_registro(fake, id_persona, destino)
+            topico = seleccionar_topico(conteo)
+            registro = crear_registro(fake, id_persona, topico)
 
             future = producer.send(
-                destino["topic"],
-                value=registro,
-                partition=destino["partition"]
+                topico,
+                key=id_persona,
+                value=registro
             )
 
+            future.add_callback(al_recibir_meta)
             future.add_errback(al_error_envio)
-            conteo_por_topico[destino["topic"]] += 1
+
+            conteo_por_topico[topico] += 1
 
             if id_persona % PAUSA_CADA == 0:
                 time.sleep(SEGUNDOS_PAUSA)
@@ -181,7 +207,9 @@ def iniciar_productor():
                     f"-> {id_persona} registros enviados | "
                     f"zona1: {conteo_por_topico['datos-usuarios-zona1']} | "
                     f"zona2: {conteo_por_topico['datos-usuarios-zona2']} | "
-                    f"zona3: {conteo_por_topico['datos-usuarios-zona3']}"
+                    f"zona3: {conteo_por_topico['datos-usuarios-zona3']} | "
+                    f"zona4: {conteo_por_topico['datos-usuarios-zona4']} | "
+                    f"zona5: {conteo_por_topico['datos-usuarios-zona5']}"
                 )
 
         print("\nLiberando flujo final de red...")

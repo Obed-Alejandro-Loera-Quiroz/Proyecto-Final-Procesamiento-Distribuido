@@ -2,29 +2,59 @@
 
 set -e
 
-if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
+if [ ! -f .env ]; then
+    echo "Error: no existe el archivo .env en kafka-infra"
+    echo "Crea primero el .env correspondiente a esta laptop."
+    exit 1
 fi
 
+set -a
+source .env
+set +a
+
 BROKER="${BROKER:-127.0.0.1:9092}"
-NODO_ID="${NODO_ID:-3}"
-CONTAINER_NAME="${CONTAINER_NAME:-kafka-cluster-nodo-${NODO_ID}}"
+CONTAINER_NAME="kafka-cluster-nodo-${NODO_ID}"
 
 echo "========================================================="
-echo "Creando topicos distribuidos en Apache Kafka KRaft"
+echo "CREACION DE TOPICOS - APACHE KAFKA KRAFT"
 echo "========================================================="
-echo "Contenedor usado: ${CONTAINER_NAME}"
-echo "Broker usado: ${BROKER}"
+echo "Nodo actual: ${NODO_ID}"
+echo "IP actual: ${LAPTOP_IP}"
+echo "Contenedor: ${CONTAINER_NAME}"
+echo "Broker: ${BROKER}"
 echo "========================================================="
 
-echo "Verificando contenedor..."
+echo ""
+echo "Verificando contenedor Kafka..."
+
 docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" || {
     echo "Error: el contenedor ${CONTAINER_NAME} no esta activo."
-    echo "Primero ejecuta: docker compose up -d"
+    echo "Primero levanta Kafka con:"
+    echo "docker compose up -d"
     exit 1
 }
+
+echo "Contenedor activo."
+
+echo ""
+echo "Esperando a que Kafka responda..."
+
+for i in {1..20}; do
+    if docker exec "${CONTAINER_NAME}" kafka-topics \
+        --bootstrap-server "${BROKER}" \
+        --list >/dev/null 2>&1; then
+        echo "Kafka esta listo."
+        break
+    fi
+
+    echo "Kafka aun no responde... intento ${i}/20"
+    sleep 3
+
+    if [ "$i" -eq 20 ]; then
+        echo "Error: Kafka no respondio despues de varios intentos."
+        exit 1
+    fi
+done
 
 crear_topico() {
     NOMBRE_TOPICO=$1
@@ -44,25 +74,48 @@ crear_topico() {
 crear_topico "datos-usuarios-zona1"
 crear_topico "datos-usuarios-zona2"
 crear_topico "datos-usuarios-zona3"
+crear_topico "datos-usuarios-zona4"
+crear_topico "datos-usuarios-zona5"
 
 echo ""
 echo "========================================================="
-echo "Topicos inicializados."
+echo "TOPICOS CREADOS"
 echo "========================================================="
 
 echo ""
-echo "Lista de topicos activos:"
+echo "Lista de topicos:"
 docker exec "${CONTAINER_NAME}" kafka-topics \
     --bootstrap-server "${BROKER}" \
     --list
 
 echo ""
-echo "Descripcion de topicos:"
+echo "Descripcion de topicos del proyecto:"
 docker exec "${CONTAINER_NAME}" kafka-topics \
     --bootstrap-server "${BROKER}" \
-    --describe
+    --describe \
+    --topic datos-usuarios-zona1
+
+docker exec "${CONTAINER_NAME}" kafka-topics \
+    --bootstrap-server "${BROKER}" \
+    --describe \
+    --topic datos-usuarios-zona2
+
+docker exec "${CONTAINER_NAME}" kafka-topics \
+    --bootstrap-server "${BROKER}" \
+    --describe \
+    --topic datos-usuarios-zona3
+
+docker exec "${CONTAINER_NAME}" kafka-topics \
+    --bootstrap-server "${BROKER}" \
+    --describe \
+    --topic datos-usuarios-zona4
+
+docker exec "${CONTAINER_NAME}" kafka-topics \
+    --bootstrap-server "${BROKER}" \
+    --describe \
+    --topic datos-usuarios-zona5
 
 echo ""
 echo "========================================================="
-echo "Proceso terminado."
+echo "PROCESO TERMINADO"
 echo "========================================================="
